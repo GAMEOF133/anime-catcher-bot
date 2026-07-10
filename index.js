@@ -22,7 +22,7 @@ function initDatabase() {
         if (!fs.existsSync(DB_PATH)) {
             const initialDB = { activeGroups: [], animeEdits: [], userBackpacks: {} };
             fs.writeFileSync(DB_PATH, JSON.stringify(initialDB, null, 2), 'utf8');
-            console.log('✅ Fresh database initialized on Railway Volume.');
+            console.log('Fresh database initialized on Railway Volume.');
         }
     } catch (err) {
         console.error('Database Initialization Error:', err.message);
@@ -71,6 +71,7 @@ const RARITIES = {
 
 let adminState = {};
 let activeSpawns = {};
+let pendingGifts = {}; // برای ذخیره موقت وضعیت هدیه‌ها قبل از تایید
 
 function getRandomEdit() {
     const db = readDB();
@@ -96,10 +97,7 @@ function getRandomEdit() {
 async function spawnInChat(chatId) {
     try {
         const edit = getRandomEdit();
-        if (!edit) {
-            console.log('No edits available in database to spawn!');
-            return;
-        }
+        if (!edit) return;
 
         const rarityInfo = RARITIES[edit.rarity] || RARITIES.RARE;
         const captionText = `✨ **An Anime Edit Appeared!** ✨\n\n**Anime:** ${edit.anime}\n**Rarity:** ${rarityInfo.name}\n\n🗣️ **How to catch?** Reply to this message with:\n/cap CharacterName`;
@@ -174,6 +172,146 @@ bot.command('setup', (ctx) => {
         }
         ctx.reply('✅ Auto spawn system active! An edit will spawn every 5 minutes.').catch(() => {});
     } catch(e) {}
+});
+
+bot.command('gift', async (ctx) => {
+    try {
+        if (ctx.chat.type === 'private') return ctx.reply('This command only works in groups!').catch(()=>{});
+        
+        if (!ctx.message.reply_to_message) {
+            return ctx.reply('⚠️ Please reply to the user you want to gift the edit to!').catch(() => {});
+        }
+
+        const targetUser = ctx.message.reply_to_message.from;
+        const senderId = ctx.from.id;
+
+        if (targetUser.id === senderId) {
+            return ctx.reply('❌ You cannot gift an edit to yourself!').catch(() => {});
+        }
+        if (targetUser.is_bot) {
+            return ctx.reply('❌ You cannot gift edits to bots!').catch(() => {});
+        }
+
+        const msgText = ctx.message.text || '';
+        const args = msgText.replace('/gift', '').trim();
+
+        if (!args) {
+            return ctx.reply('⚠️ Please provide the Edit ID after /gift (e.g., /gift 1)').catch(() => {});
+        }
+
+        const editId = parseInt(args);
+        if (isNaN(editId)) {
+            return ctx.reply('⚠️ Edit ID must be a valid number!').catch(() => {});
+        }
+
+        const db = readDB();
+        const senderItems = db.userBackpacks[senderId] || [];
+        
+        // پیدا کردن آیتم در بک‌پک فرستنده
+        const itemIndex = senderItems.findIndex(item => Number(item.id) === editId);
+
+        if (itemIndex === -1) {
+            return ctx.reply(`❌ You don't have an edit with ID ${editId} in your /backpack!`).catch(() => {});
+        }
+
+        const editToGift = senderItems[itemIndex];
+        const giftKey = `${ctx.chat.id}_${ctx.message.message_id}`;
+
+        // ذخیره اطلاعات هدیه به صورت موقت
+        pendingGifts[giftKey] = {
+            senderId: senderId,
+            senderName: ctx.from.first_name,
+            targetId: targetUser.id,
+            targetName: targetUser.first_name,
+            editId: editId,
+            editData: editToGift
+        };
+
+        const keyboard = [
+            [
+                { text: '🟢 Yes', callback_data: `gift_confirm_${giftKey}` },
+                { text: '🔴 No', callback_data: `gift_cancel_${giftKey}` }
+            ]
+        ];
+
+        return ctx.reply(`🎁 **Gift Confirmation**\n\n${ctx.from.first_name}, do you really want to gift **${editToGift.name}** (ID: ${editId}) to **${targetUser.first_name}**?`, {
+            reply_markup: { inline_keyboard: keyboard },
+            parse_mode: 'Markdown'
+        }).catch(() => {});
+
+    } catch (e) {
+        console.error('Error in gift command:', e.message);
+    }
+});
+
+bot.action(/gift_confirm_(.+)/, (ctx) => {
+    try {
+        const giftKey = ctx.match[1];
+        const giftData = pendingGifts[giftKey];
+
+        if (!giftData) {
+            return ctx.answerCbQuery('This gift session has expired. ❌', { show_alert: true }).catch(()=>{});
+        }
+
+        // فقط فرستنده هدیه اجازه دارد تاییدش کند
+        if (ctx.from.id !== giftData.senderId) {
+            return ctx.answerCbQuery('❌ Only the person sending the gift can confirm this!', { show_alert: true }).catch(()=>{});
+        }
+
+        const db = readDB();
+        const senderItems = db.userBackpacks[giftData.senderId] || [];
+        
+        // چک کردن مجدد وجود آیتم برای امنیت بیشتر
+        const itemIndex = senderItems.findIndex(item => Number(item.id) === giftData.editId);
+
+        if (itemIndex === -1) {
+            delete pendingGifts[giftKey];
+            ctx.answerCbQuery().catch(()=>{});
+            return ctx.editMessageText('❌ Transaction failed: Item is no longer in your backpack.').catch(() => {});
+        }
+
+        // ۱. حذف از بک‌پک فرستنده
+        const [movedItem] = senderItems.splice(itemIndex, 1);
+        db.userBackpacks[giftData.senderId] = senderItems;
+
+        // ۲. اضافه کردن به بک‌پک گیرنده
+        if (!db.userBackpacks[giftData.targetId]) {
+            db.userBackpacks[giftData.targetId] = [];
+        }
+        db.userBackpacks[giftData.targetId].push(movedItem);
+
+        writeDB(db);
+        delete pendingGifts[giftKey];
+
+        ctx.answerCbQuery('Gift sent successfully! 🎉').catch(()=>{});
+        return ctx.editMessageText(`🎁 **Gift Delivered!**\n\n🎉 **${giftData.senderName}** successfully gifted **${giftData.editData.name}** (ID: ${giftData.editId}) to **${giftData.targetName}**!`).catch(() => {});
+
+    } catch (e) {
+        console.error('Error in gift confirm action:', e.message);
+    }
+});
+
+bot.action(/gift_cancel_(.+)/, (ctx) => {
+    try {
+        const giftKey = ctx.match[1];
+        const giftData = pendingGifts[giftKey];
+
+        if (!giftData) {
+            return ctx.answerCbQuery('This gift session has expired. ❌', { show_alert: true }).catch(()=>{});
+        }
+
+        // فقط فرستنده هدیه اجازه دارد لغوش کند
+        if (ctx.from.id !== giftData.senderId) {
+            return ctx.answerCbQuery('❌ Only the person sending the gift can cancel this!', { show_alert: true }).catch(()=>{});
+        }
+
+        delete pendingGifts[giftKey];
+        ctx.answerCbQuery('Gift cancelled. 🔴').catch(()=>{});
+        return ctx.editMessageText(`🔴 **Gift Cancelled:**\n${giftData.senderName} decided not to send the gift.`).catch(() => {});
+
+    } catch (e) {
+        console.error('Error in gift cancel action:', e.message);
+    }
 });
 
 bot.command('see', async (ctx) => {
@@ -570,7 +708,7 @@ http.createServer((req, res) => {
     res.end();
 }).listen(process.env.PORT || 3000);
 
-bot.launch().then(() => console.log('✅ ID System and Deployment completely synchronized!'));
+bot.launch().then(() => console.log('✅ ID System, Voluming and Gift System completely activated!'));
 
 process.on('uncaughtException', (err) => {
     console.error('Caught exception: ', err);
