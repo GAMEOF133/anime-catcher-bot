@@ -171,7 +171,7 @@ bot.command('setup', (ctx) => {
             db.activeGroups.push(chatId);
             writeDB(db);
         }
-        ctx.reply('✅ Auto spawn system active! An edit will spawn every 5 minutes.').catch(() => {});
+        ctx.reply('✅ Auto spawn system active! An edit will spawn every 10 minutes.').catch(() => {});
     } catch(e) {}
 });
 
@@ -694,7 +694,8 @@ bot.on('message', async (ctx) => {
     } catch(e) {}
 });
 
-setInterval(spawnEditInGroups, 300000);
+// زمان اسپاون روی ۱۰ دقیقه تنظیم شد
+setInterval(spawnEditInGroups, 600000);
 
 const http = require('http');
 http.createServer((req, res) => {
