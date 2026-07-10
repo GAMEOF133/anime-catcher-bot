@@ -1,5 +1,4 @@
-const { Telegraf, Scenes } = require('telegraf');
-const { session } = require('@telegraf/session');
+const { Telegraf } = require('telegraf');
 const fs = require('fs');
 const path = require('path');
 
@@ -34,78 +33,8 @@ const RARITIES = {
     LIMITED: { name: 'Limited 🟣', chance: 1 }
 };
 
-// یک حافظه موقت و مطمئن برای ذخیره داده‌های ادمین در طول مراحل ویزارد
-let tempAdminStorage = {};
-
-// 2. Wizard Scene for Adding New Edits
-const addEditWizard = new Scenes.WizardScene(
-    'add_edit_wizard',
-    (ctx) => {
-        ctx.reply('Please send/forward the Video or Photo for this edit:').catch(() => {});
-        tempAdminStorage[ctx.from.id] = {}; // ایجاد پوشه موقت برای این کاربر
-        return ctx.wizard.next();
-    },
-    (ctx) => {
-        if (ctx.callbackQuery) return; 
-        let fileId = null;
-        let fileType = null;
-
-        if (ctx.message.video) {
-            fileId = ctx.message.video.file_id;
-            fileType = 'video';
-        } else if (ctx.message.photo) {
-            fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-            fileType = 'photo';
-        } else if (ctx.message.animation) {
-            fileId = ctx.message.animation.file_id;
-            fileType = 'animation';
-        }
-
-        if (!fileId) {
-            ctx.reply('Invalid format! Please send a valid Video, GIF, or Photo:').catch(() => {});
-            return;
-        }
-
-        if (!tempAdminStorage[ctx.from.id]) tempAdminStorage[ctx.from.id] = {};
-        tempAdminStorage[ctx.from.id].file = fileId;
-        tempAdminStorage[ctx.from.id].type = fileType;
-        
-        ctx.reply('What is the Character Name?').catch(() => {});
-        return ctx.wizard.next();
-    },
-    (ctx) => {
-        if (!ctx.message || !ctx.message.text) {
-            ctx.reply('Please type a text name for the character:').catch(() => {});
-            return;
-        }
-        if (!tempAdminStorage[ctx.from.id]) return ctx.scene.leave();
-        tempAdminStorage[ctx.from.id].name = ctx.message.text;
-        
-        ctx.reply('What is the Anime Name?').catch(() => {});
-        return ctx.wizard.next();
-    },
-    (ctx) => {
-        if (!ctx.message || !ctx.message.text) {
-            ctx.reply('Please type a text name for the anime:').catch(() => {});
-            return;
-        }
-        if (!tempAdminStorage[ctx.from.id]) return ctx.scene.leave();
-        tempAdminStorage[ctx.from.id].anime = ctx.message.text;
-
-        const buttons = Object.keys(RARITIES).map(key => [{ text: RARITIES[key].name, callback_data: `set_rarity_${key}` }]);
-        ctx.reply('Select the Rarity for this edit:', {
-            reply_markup: { inline_keyboard: buttons }
-        }).catch(() => {});
-        return ctx.wizard.next();
-    },
-    async (ctx) => {
-        return ctx.scene.leave();
-    }
-);
-
-const stage = new Scenes.Stage([addEditWizard]);
-bot.use(session()); 
-bot.use(stage.middleware());
+// سیستم مدیریت وضعیت ادمین به صورت دستی و کاملاً پایدار
+let adminState = {};
 
 function getRandomEdit() {
     const db = readDB();
@@ -157,8 +86,10 @@ function spawnEditInGroups() {
     db.activeGroups.forEach((chatId) => spawnInChat(chatId));
 }
 
+// پیام شروع ربات
 bot.start((ctx) => {
     if (ctx.from.id === ADMIN_ID && ctx.chat.type === 'private') {
+        adminState[ctx.from.id] = null; // ریست کردن وضعیت ادمین
         return ctx.reply('Welcome back Admin! Use the control button below:', {
             reply_markup: {
                 inline_keyboard: [[{ text: '➕ Add Edit', callback_data: 'admin_start_add' }]]
@@ -168,6 +99,7 @@ bot.start((ctx) => {
     ctx.reply('Welcome to Anime Catcher Bot! Add me to a group and send /setup to activate.').catch(() => {});
 });
 
+// دستور تست اسپان کاراکتر
 bot.command('amir', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) {
         return ctx.reply('Unauthorized access! Only the owner can use this command.').catch(() => {});
@@ -175,6 +107,7 @@ bot.command('amir', (ctx) => {
     spawnInChat(ctx.chat.id);
 });
 
+// فعال‌سازی گروه
 bot.command('setup', (ctx) => {
     if (ctx.chat.type === 'private') {
         return ctx.reply('This command can only be used inside Telegram Groups!').catch(() => {});
@@ -189,41 +122,103 @@ bot.command('setup', (ctx) => {
     ctx.reply('✅ Auto spawn system is now active in this group! An edit will spawn every 5 minutes.').catch(() => {});
 });
 
+// شروع فرآیند افزودن کاراکتر
 bot.action('admin_start_add', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(() => {});
     ctx.answerCbQuery().catch(() => {});
-    tempAdminStorage[ctx.from.id] = {}; 
-    return ctx.scene.enter('add_edit_wizard');
+    
+    adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
+    return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
 });
 
+// دکمه انتخاب Rarity
 bot.action(/set_rarity_(.+)/, async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(() => {});
     
     const selectedRarity = ctx.match[1];
-    const editData = tempAdminStorage[ctx.from.id];
+    const userState = adminState[ctx.from.id];
     
-    if (!editData || !editData.file) {
-        await ctx.answerCbQuery('Session error. Please use ➕ Add Edit again.', { show_alert: true }).catch(() => {});
-        return ctx.scene.leave();
+    if (!userState || !userState.data || !userState.data.file) {
+        await ctx.answerCbQuery('Session expired. Please click ➕ Add Edit again.', { show_alert: true }).catch(() => {});
+        return;
     }
     
-    editData.rarity = selectedRarity;
+    userState.data.rarity = selectedRarity;
 
     const db = readDB();
     const nextId = db.animeEdits.length > 0 ? Math.max(...db.animeEdits.map(e => e.id)) + 1 : 1;
-    editData.id = nextId;
+    userState.data.id = nextId;
 
-    db.animeEdits.push(editData);
+    db.animeEdits.push(userState.data);
     writeDB(db);
 
-    delete tempAdminStorage[ctx.from.id]; // پاک کردن تِمپ بعد از ذخیره موفق
+    adminState[ctx.from.id] = null; // ریست وضعیت بعد از ثبت موفق
 
     await ctx.answerCbQuery().catch(() => {});
-    await ctx.reply(`✅ Successfully added dynamically!\n\nCode ID: ${editData.id}\nCharacter: ${editData.name}\nAnime: ${editData.anime}\nRarity: ${RARITIES[selectedRarity].name}`).catch(() => {});
-    
-    return ctx.scene.leave();
+    return ctx.reply(`✅ Successfully added!\n\nCode ID: ${userState.data.id}\nCharacter: ${userState.data.name}\nAnime: ${userState.data.anime}\nRarity: ${RARITIES[selectedRarity].name}`).catch(() => {});
 });
 
+// گرفتن مشخصات کاراکتر به صورت متنی و گام‌به‌گام
+bot.on('message', async (ctx) => {
+    if (ctx.chat.type !== 'private' || ctx.from.id !== ADMIN_ID) return;
+    
+    const userState = adminState[ctx.from.id];
+    if (!userState) return;
+
+    // گام اول: دریافت فایل
+    if (userState.step === 'WAITING_FOR_FILE') {
+        let fileId = null;
+        let fileType = null;
+
+        if (ctx.message.video) {
+            fileId = ctx.message.video.file_id;
+            fileType = 'video';
+        } else if (ctx.message.photo) {
+            fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+            fileType = 'photo';
+        } else if (ctx.message.animation) {
+            fileId = ctx.message.animation.file_id;
+            fileType = 'animation';
+        }
+
+        if (!fileId) {
+            return ctx.reply('Invalid format! Please send a valid Video, GIF, or Photo:').catch(() => {});
+        }
+
+        userState.data.file = fileId;
+        userState.data.type = fileType;
+        userState.step = 'WAITING_FOR_NAME';
+        
+        return ctx.reply('What is the Character Name?').catch(() => {});
+    }
+
+    // گام دوم: دریافت نام کاراکتر
+    if (userState.step === 'WAITING_FOR_NAME') {
+        if (!ctx.message.text) {
+            return ctx.reply('Please type a text name for the character:').catch(() => {});
+        }
+        userState.data.name = ctx.message.text;
+        userState.step = 'WAITING_FOR_ANIME';
+        
+        return ctx.reply('What is the Anime Name?').catch(() => {});
+    }
+
+    // گام سوم: دریافت نام انیمه و نمایش دکمه‌ها
+    if (userState.step === 'WAITING_FOR_ANIME') {
+        if (!ctx.message.text) {
+            return ctx.reply('Please type a text name for the anime:').catch(() => {});
+        }
+        userState.data.anime = ctx.message.text;
+        userState.step = 'WAITING_FOR_RARITY';
+
+        const buttons = Object.keys(RARITIES).map(key => [{ text: RARITIES[key].name, callback_data: `set_rarity_${key}` }]);
+        return ctx.reply('Select the Rarity for this edit:', {
+            reply_markup: { inline_keyboard: buttons }
+        }).catch(() => {});
+    }
+});
+
+// دکمه Capture برای ممبرها
 bot.action(/catch_(\d+)/, (ctx) => {
     const editId = parseInt(ctx.match[1]);
     const db = readDB();
@@ -241,8 +236,10 @@ bot.action(/catch_(\d+)/, (ctx) => {
     }).catch(() => {});
 });
 
+// اسپان خودکار هر ۵ دقیقه
 setInterval(spawnEditInGroups, 300000);
 
+// زنده نگه داشتن هاست
 const http = require('http');
 http.createServer((req, res) => {
     res.write("Bot is Running!");
