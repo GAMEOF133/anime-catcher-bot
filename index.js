@@ -197,6 +197,52 @@ bot.command('see', async (ctx) => {
     }
 });
 
+// ➕ کامند جدید اختصاصی برای ادمین جهت دریافت ادیت با آیدی
+bot.command('get', async (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return;
+
+        const msgText = ctx.message.text || '';
+        const args = msgText.replace('/get', '').trim();
+        
+        if (!args) {
+            return ctx.reply('⚠️ Please provide the Edit ID after /get (e.g., /get 2)').catch(() => {});
+        }
+
+        const editId = parseInt(args);
+        if (isNaN(editId)) {
+            return ctx.reply('⚠️ Edit ID must be a valid number!').catch(() => {});
+        }
+
+        const db = readDB();
+        const edit = db.animeEdits.find(e => Number(e.id) === editId);
+
+        if (!edit) {
+            return ctx.reply(`❌ No edit found with ID: ${editId} in database.`).catch(() => {});
+        }
+
+        if (!db.userBackpacks[ADMIN_ID]) {
+            db.userBackpacks[ADMIN_ID] = [];
+        }
+
+        db.userBackpacks[ADMIN_ID].push({
+            id: Number(edit.id), 
+            name: edit.name,
+            anime: edit.anime,
+            rarity: edit.rarity,
+            caughtAt: new Date().toISOString()
+        });
+        
+        writeDB(db);
+
+        const rarityName = RARITIES[edit.rarity] ? RARITIES[edit.rarity].name : edit.rarity;
+        return ctx.reply(`🎁 **Admin Action:**\nSuccessfully added **${edit.name}** (ID: ${edit.id} - ${rarityName}) to your /backpack!`).catch(() => {});
+
+    } catch (e) {
+        console.error('Error in get command:', e.message);
+    }
+});
+
 bot.command('backpack', (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -297,7 +343,6 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
         userState.data.rarity = selectedRarity;
         const db = readDB();
         
-        // اصلاح فرمول آیدی: محاسبه مرتب بر اساس بزرگ‌ترین آیدیِ موجود
         let nextId = 1;
         if (db.animeEdits && db.animeEdits.length > 0) {
             const ids = db.animeEdits.map(e => Number(e.id)).filter(id => !isNaN(id));
