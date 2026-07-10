@@ -14,10 +14,21 @@ const DB_PATH = path.join(__dirname, 'db.json');
 
 function readDB() {
     try {
+        if (!fs.existsSync(DB_PATH)) {
+            const initialDB = { activeGroups: [], animeEdits: [], userBackpacks: {} };
+            fs.writeFileSync(DB_PATH, JSON.stringify(initialDB, null, 2), 'utf8');
+            return initialDB;
+        }
         const data = fs.readFileSync(DB_PATH, 'utf8');
-        return JSON.parse(data);
+        const parsed = JSON.parse(data);
+        
+        // ایمن‌سازی دیتابیس در صورت نبودن کلیدهای اصلی
+        if (!parsed.activeGroups) parsed.activeGroups = [];
+        if (!parsed.animeEdits) parsed.animeEdits = [];
+        if (!parsed.userBackpacks) parsed.userBackpacks = {};
+        
+        return parsed;
     } catch (err) {
-        // اضافه شدن ساختار userBackpacks به دیتابیس برای ذخیره موجودی ممبرها
         return { activeGroups: [], animeEdits: [], userBackpacks: {} };
     }
 }
@@ -63,13 +74,13 @@ function getRandomEdit() {
 }
 
 async function spawnInChat(chatId) {
-    const edit = getRandomEdit();
-    if (!edit) return;
-
-    const rarityInfo = RARITIES[edit.rarity];
-    const captionText = `✨ **An Anime Edit Appeared!** ✨\n\n**Anime:** ${edit.anime}\n**Rarity:** ${rarityInfo.name}\n\n🗣️ **How to catch?** Reply to this message with:\n/cap CharacterName`;
-
     try {
+        const edit = getRandomEdit();
+        if (!edit) return;
+
+        const rarityInfo = RARITIES[edit.rarity];
+        const captionText = `✨ **An Anime Edit Appeared!** ✨\n\n**Anime:** ${edit.anime}\n**Rarity:** ${rarityInfo.name}\n\n🗣️ **How to catch?** Reply to this message with:\n/cap CharacterName`;
+
         let sentMsg;
         if (edit.type === 'video') {
             sentMsg = await bot.telegram.sendVideo(chatId, edit.file, { caption: captionText, parse_mode: 'Markdown' });
@@ -88,16 +99,17 @@ async function spawnInChat(chatId) {
             anime: edit.anime,
             captured: false
         };
-
     } catch (error) {
         console.error(`Failed to send spawn to chat ${chatId}:`, error.message);
     }
 }
 
 function spawnEditInGroups() {
-    const db = readDB();
-    if (!db.activeGroups || db.activeGroups.length === 0) return;
-    db.activeGroups.forEach((chatId) => spawnInChat(chatId).catch(()=>{}));
+    try {
+        const db = readDB();
+        if (!db.activeGroups || db.activeGroups.length === 0) return;
+        db.activeGroups.forEach((chatId) => spawnInChat(chatId).catch(()=>{}));
+    } catch(e) {}
 }
 
 bot.start((ctx) => {
@@ -117,7 +129,7 @@ bot.start((ctx) => {
     } catch(e) {}
 });
 
-// تغییر کامند /amir به /spawn و فرستادن ادیت کاملاً شانسی
+// دستور کاملاً شانسی و ایمن ادمین
 bot.command('spawn', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     spawnInChat(ctx.chat.id).catch(()=>{});
@@ -136,13 +148,12 @@ bot.command('setup', (ctx) => {
     } catch(e) {}
 });
 
-// سیستم بررسی کوله‌پشتی کاربران
+// سیستم بررسی کوله‌پشتی ایمن با مدیریت خطای دیتابیس قدیمی
 bot.command('backpack', (ctx) => {
     try {
         const userId = ctx.from.id;
         const db = readDB();
         
-        if (!db.userBackpacks) db.userBackpacks = {};
         const userItems = db.userBackpacks[userId] || [];
 
         if (userItems.length === 0) {
@@ -187,10 +198,9 @@ bot.command('cap', async (ctx) => {
         if (guess === activeSpawn.name) {
             activeSpawn.captured = true;
             
-            // ذخیره کاراکتر صید شده در کوله‌پشتی فرد داخل دیتابیس
             const userId = ctx.from.id;
             const db = readDB();
-            if (!db.userBackpacks) db.userBackpacks = {};
+            
             if (!db.userBackpacks[userId]) db.userBackpacks[userId] = [];
             
             db.userBackpacks[userId].push({
@@ -239,227 +249,6 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
         userState.data.rarity = selectedRarity;
         const db = readDB();
         const nextId = db.animeEdits ? db.animeEdits.length + 1 : 1; 
-        userState.data.id = nextId;
-
-        if (!db.animeEdits) db.animeEdits = [];
-        db.animeEdits.push(userState.data);
-        writeDB(db);
-        adminState[ctx.from.id] = null;
-
-        ctx.answerCbQuery().catch(()=>{});
-        return ctx.reply(`✅ Successfully added!\n\nCode ID: ${userState.data.id}\nCharacter: ${userState.data.name}\nAnime: ${userState.data.anime}\nRarity: ${RARITIES[selectedRarity].name}`).catch(() => {});
-    } catch(e) {}
-});
-
-bot.action(/admin_manage_list_(\d+)/, (ctx) => {
-    try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
-        ctx.answerCbQuery().catch(()=>{});
-        
-        const page = parseInt(ctx.match[1]);
-        const db = readDB();
-        const edits = db.animeEdits || [];
-
-        if (edits.length === 0) {
-            return ctx.reply('No edits found in database.').const { Telegraf } = require('telegraf');
-const fs = require('fs');
-const path = require('path');
-
-// 1. Configuration
-const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
-const ADMIN_ID = 7334867757; 
-
-const bot = new Telegraf(BOT_TOKEN, { 
-    handlerTimeout: 90000 
-});
-
-const DB_PATH = path.join(__dirname, 'db.json');
-
-function readDB() {
-    try {
-        const data = fs.readFileSync(DB_PATH, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        return { activeGroups: [], animeEdits: [] };
-    }
-}
-
-function writeDB(data) {
-    try {
-        fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
-    } catch (err) {
-        console.error('Failed to write to DB:', err.message);
-    }
-}
-
-const RARITIES = {
-    RARE: { name: 'Rare 🟢', chance: 50 },
-    EPIC: { name: 'Epic 🔵', chance: 30 },
-    LEGENDARY: { name: 'Legendary 🟡', chance: 14 },
-    MYTHIC: { name: 'Mythic 🔴', chance: 5 },
-    LIMITED: { name: 'Limited 🟣', chance: 1 }
-};
-
-let adminState = {};
-let activeSpawns = {};
-
-function getRandomEdit() {
-    const db = readDB();
-    if (!db.animeEdits || db.animeEdits.length === 0) return null;
-
-    const roll = Math.random() * 100;
-    let currentChance = 0;
-    let selectedRarity = 'RARE';
-
-    for (const [key, value] of Object.entries(RARITIES)) {
-        currentChance += value.chance;
-        if (roll <= currentChance) {
-            selectedRarity = key;
-            break;
-        }
-    }
-
-    const pool = db.animeEdits.filter(edit => edit.rarity === selectedRarity);
-    if (pool.length === 0) return db.animeEdits[0]; 
-    return pool[Math.floor(Math.random() * pool.length)];
-}
-
-async function spawnInChat(chatId) {
-    const edit = getRandomEdit();
-    if (!edit) return;
-
-    const rarityInfo = RARITIES[edit.rarity];
-    const captionText = `✨ **An Anime Edit Appeared!** ✨\n\n**Anime:** ${edit.anime}\n**Rarity:** ${rarityInfo.name}\n\n🗣️ **How to catch?** Reply to this message with:\n/cap CharacterName`;
-
-    try {
-        let sentMsg;
-        if (edit.type === 'video') {
-            sentMsg = await bot.telegram.sendVideo(chatId, edit.file, { caption: captionText, parse_mode: 'Markdown' });
-        } else if (edit.type === 'animation') {
-            sentMsg = await bot.telegram.sendAnimation(chatId, edit.file, { caption: captionText, parse_mode: 'Markdown' });
-        } else {
-            sentMsg = await bot.telegram.sendPhoto(chatId, edit.file, { caption: captionText, parse_mode: 'Markdown' });
-        }
-
-        activeSpawns[sentMsg.message_id] = {
-            id: edit.id,
-            name: edit.name.trim().toLowerCase(),
-            fullName: edit.name,
-            rarityName: rarityInfo.name,
-            captured: false
-        };
-
-    } catch (error) {
-        console.error(`Failed to send spawn to chat ${chatId}:`, error.message);
-    }
-}
-
-function spawnEditInGroups() {
-    const db = readDB();
-    if (!db.activeGroups || db.activeGroups.length === 0) return;
-    db.activeGroups.forEach((chatId) => spawnInChat(chatId).catch(()=>{}));
-}
-
-bot.start((ctx) => {
-    try {
-        if (ctx.from.id === ADMIN_ID && ctx.chat.type === 'private') {
-            adminState[ctx.from.id] = null; 
-            return ctx.reply('Welcome back Admin! Choose an option:', {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: '➕ Add New Edit', callback_data: 'admin_start_add' }],
-                        [{ text: '📂 Manage Edits (Edit/Delete)', callback_data: 'admin_manage_list_0' }]
-                    ]
-                }
-            }).catch(() => {});
-        }
-        ctx.reply('Welcome to Anime Catcher Bot! Add me to a group and send /setup to activate.').catch(() => {});
-    } catch(e) {}
-});
-
-bot.command('amir', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    spawnInChat(ctx.chat.id).catch(()=>{});
-});
-
-bot.command('setup', (ctx) => {
-    try {
-        if (ctx.chat.type === 'private') return ctx.reply('This command only works in groups!').catch(()=>{});
-        const chatId = ctx.chat.id;
-        const db = readDB();
-        if (!db.activeGroups.includes(chatId)) {
-            db.activeGroups.push(chatId);
-            writeDB(db);
-        }
-        ctx.reply('✅ Auto spawn system active! An edit will spawn every 5 minutes.').catch(() => {});
-    } catch(e) {}
-});
-
-bot.command('cap', async (ctx) => {
-    try {
-        if (ctx.chat.type === 'private') return;
-        
-        if (!ctx.message.reply_to_message) {
-            return ctx.reply('⚠️ Please reply to the anime edit message!').catch(() => {});
-        }
-
-        const replyMsgId = ctx.message.reply_to_message.message_id;
-        const activeSpawn = activeSpawns[replyMsgId];
-
-        if (!activeSpawn) return;
-        if (activeSpawn.captured) {
-            return ctx.reply('❌ This edit has already been captured by someone else!').catch(() => {});
-        }
-
-        let msgText = ctx.message.text || '';
-        const guess = msgText.replace('/cap', '').trim().toLowerCase();
-        
-        if (!guess) {
-            return ctx.reply('⚠️ Please provide the character name after /cap (e.g., /cap Diego)').catch(() => {});
-        }
-
-        if (guess === activeSpawn.name) {
-            activeSpawn.captured = true;
-            
-            try {
-                await bot.telegram.editMessageCaption(ctx.chat.id, replyMsgId, undefined, `🎒 **Captured by ${ctx.from.first_name}!** 🎉\n\n**Character Name:** ${activeSpawn.fullName}\n**Rarity:** ${activeSpawn.rarityName}`, {
-                    parse_mode: 'Markdown'
-                });
-            } catch(e){
-                console.error('Failed to edit caption:', e.message);
-            }
-
-            return ctx.reply(`🎉 **Congratulations ${ctx.from.first_name}!** You guessed correctly and captured **${activeSpawn.fullName}**!`).catch(() => {});
-        } else {
-            return ctx.reply('❌ Wrong name! Try again.').catch(() => {});
-        }
-    } catch(e) {
-        console.error('Error in cap command:', e.message);
-    }
-});
-
-bot.action('admin_start_add', (ctx) => {
-    try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
-        ctx.answerCbQuery().catch(()=>{});
-        adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
-        return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
-    } catch(e) {}
-});
-
-bot.action(/set_rarity_(.+)/, async (ctx) => {
-    try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
-        const selectedRarity = ctx.match[1];
-        const userState = adminState[ctx.from.id];
-        
-        if (!userState || !userState.data || !userState.data.file) {
-            return ctx.answerCbQuery('Session expired.', { show_alert: true }).catch(()=>{});
-        }
-        
-        userState.data.rarity = selectedRarity;
-        const db = readDB();
-        const nextId = db.animeEdits.length + 1; 
         userState.data.id = nextId;
 
         db.animeEdits.push(userState.data);
@@ -653,9 +442,8 @@ http.createServer((req, res) => {
     res.end();
 }).listen(process.env.PORT || 3000);
 
-bot.launch().then(() => console.log('✅ Anti-Crash Advanced System online!'));
+bot.launch().then(() => console.log('✅ 100% Fixed and Stable System online!'));
 
-// گرفتن ارورهای احتمالی کلی برای جلوگیری از کرش کل پروژه
 process.on('uncaughtException', (err) => {
     console.error('Caught exception: ', err);
 });
