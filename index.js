@@ -33,7 +33,6 @@ const RARITIES = {
     LIMITED: { name: 'Limited 🟣', chance: 1 }
 };
 
-// سیستم مدیریت وضعیت ادمین به صورت دستی و کاملاً پایدار
 let adminState = {};
 
 function getRandomEdit() {
@@ -86,10 +85,9 @@ function spawnEditInGroups() {
     db.activeGroups.forEach((chatId) => spawnInChat(chatId));
 }
 
-// پیام شروع ربات
 bot.start((ctx) => {
     if (ctx.from.id === ADMIN_ID && ctx.chat.type === 'private') {
-        adminState[ctx.from.id] = null; // ریست کردن وضعیت ادمین
+        adminState[ctx.from.id] = null; 
         return ctx.reply('Welcome back Admin! Use the control button below:', {
             reply_markup: {
                 inline_keyboard: [[{ text: '➕ Add Edit', callback_data: 'admin_start_add' }]]
@@ -99,7 +97,6 @@ bot.start((ctx) => {
     ctx.reply('Welcome to Anime Catcher Bot! Add me to a group and send /setup to activate.').catch(() => {});
 });
 
-// دستور تست اسپان کاراکتر
 bot.command('amir', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) {
         return ctx.reply('Unauthorized access! Only the owner can use this command.').catch(() => {});
@@ -107,7 +104,6 @@ bot.command('amir', (ctx) => {
     spawnInChat(ctx.chat.id);
 });
 
-// فعال‌سازی گروه
 bot.command('setup', (ctx) => {
     if (ctx.chat.type === 'private') {
         return ctx.reply('This command can only be used inside Telegram Groups!').catch(() => {});
@@ -122,7 +118,6 @@ bot.command('setup', (ctx) => {
     ctx.reply('✅ Auto spawn system is now active in this group! An edit will spawn every 5 minutes.').catch(() => {});
 });
 
-// شروع فرآیند افزودن کاراکتر
 bot.action('admin_start_add', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(() => {});
     ctx.answerCbQuery().catch(() => {});
@@ -131,7 +126,6 @@ bot.action('admin_start_add', (ctx) => {
     return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
 });
 
-// دکمه انتخاب Rarity
 bot.action(/set_rarity_(.+)/, async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(() => {});
     
@@ -146,26 +140,26 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
     userState.data.rarity = selectedRarity;
 
     const db = readDB();
-    const nextId = db.animeEdits.length > 0 ? Math.max(...db.animeEdits.map(e => e.id)) + 1 : 1;
+    
+    // اصلاح اصلی: آیدی‌ها دقیقاً بر اساس ترتیب از 1 شروع می‌شوند
+    const nextId = db.animeEdits.length + 1;
     userState.data.id = nextId;
 
     db.animeEdits.push(userState.data);
     writeDB(db);
 
-    adminState[ctx.from.id] = null; // ریست وضعیت بعد از ثبت موفق
+    adminState[ctx.from.id] = null; 
 
     await ctx.answerCbQuery().catch(() => {});
     return ctx.reply(`✅ Successfully added!\n\nCode ID: ${userState.data.id}\nCharacter: ${userState.data.name}\nAnime: ${userState.data.anime}\nRarity: ${RARITIES[selectedRarity].name}`).catch(() => {});
 });
 
-// گرفتن مشخصات کاراکتر به صورت متنی و گام‌به‌گام
 bot.on('message', async (ctx) => {
     if (ctx.chat.type !== 'private' || ctx.from.id !== ADMIN_ID) return;
     
     const userState = adminState[ctx.from.id];
     if (!userState) return;
 
-    // گام اول: دریافت فایل
     if (userState.step === 'WAITING_FOR_FILE') {
         let fileId = null;
         let fileType = null;
@@ -192,7 +186,6 @@ bot.on('message', async (ctx) => {
         return ctx.reply('What is the Character Name?').catch(() => {});
     }
 
-    // گام دوم: دریافت نام کاراکتر
     if (userState.step === 'WAITING_FOR_NAME') {
         if (!ctx.message.text) {
             return ctx.reply('Please type a text name for the character:').catch(() => {});
@@ -203,7 +196,6 @@ bot.on('message', async (ctx) => {
         return ctx.reply('What is the Anime Name?').catch(() => {});
     }
 
-    // گام سوم: دریافت نام انیمه و نمایش دکمه‌ها
     if (userState.step === 'WAITING_FOR_ANIME') {
         if (!ctx.message.text) {
             return ctx.reply('Please type a text name for the anime:').catch(() => {});
@@ -218,7 +210,6 @@ bot.on('message', async (ctx) => {
     }
 });
 
-// دکمه Capture برای ممبرها
 bot.action(/catch_(\d+)/, (ctx) => {
     const editId = parseInt(ctx.match[1]);
     const db = readDB();
@@ -236,14 +227,12 @@ bot.action(/catch_(\d+)/, (ctx) => {
     }).catch(() => {});
 });
 
-// اسپان خودکار هر ۵ دقیقه
 setInterval(spawnEditInGroups, 300000);
 
-// زنده نگه داشتن هاست
 const http = require('http');
 http.createServer((req, res) => {
     res.write("Bot is Running!");
     res.end();
 }).listen(process.env.PORT || 3000);
 
-bot.launch().then(() => console.log('✅ Stable Anime Bot is live on Host!'));
+bot.launch().then(() => console.log('✅ System ID fixed and active!'));
