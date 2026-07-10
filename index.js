@@ -10,7 +10,6 @@ const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 90000 
 });
 
-// برای جلوگیری از پاک شدن در ریل‌وی، مسیر دیتابیس را منعطف‌تر کردیم
 const DB_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH 
     ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'db.json')
     : path.join(__dirname, 'db.json');
@@ -92,9 +91,8 @@ async function spawnInChat(chatId) {
             sentMsg = await bot.telegram.sendPhoto(chatId, edit.file, { caption: captionText, parse_mode: 'Markdown' });
         }
 
-        // اصلاح کلیدی: ذخیره دقیق ایدی اصلی ادیت (edit.id) به جای آیدی‌های متفرقه
         activeSpawns[sentMsg.message_id] = {
-            id: edit.id, 
+            id: Number(edit.id), 
             name: edit.name.trim().toLowerCase(),
             fullName: edit.name,
             rarityName: rarityInfo.name,
@@ -165,7 +163,7 @@ bot.command('see', async (ctx) => {
         }
 
         const db = readDB();
-        const edit = db.animeEdits.find(e => e.id === editId);
+        const edit = db.animeEdits.find(e => Number(e.id) === editId);
 
         if (!edit) {
             return ctx.reply(`❌ No edit found with ID: ${editId}`).catch(() => {});
@@ -174,7 +172,7 @@ bot.command('see', async (ctx) => {
         let owners = [];
         if (db.userBackpacks) {
             for (const [userId, items] of Object.entries(db.userBackpacks)) {
-                const count = items.filter(item => item.id === editId).length;
+                const count = items.filter(item => Number(item.id) === editId).length;
                 if (count > 0) {
                     owners.push(`${userId} (${count} time${count > 1 ? 's' : ''})`);
                 }
@@ -213,7 +211,6 @@ bot.command('backpack', (ctx) => {
         let report = `🎒 **${ctx.from.first_name}'s Backpack (${userItems.length} items):**\n\n`;
         userItems.forEach((item, index) => {
             const rarityName = RARITIES[item.rarity] ? RARITIES[item.rarity].name : item.rarity;
-            // اصلاح نمایش: حالا دقیقاً ایدی کاراکتر (مثل 1) نمایش داده می‌شود
             report += `${index + 1}. **${item.name}** - ${item.anime} (ID: ${item.id} - ${rarityName})\n`;
         });
 
@@ -254,9 +251,8 @@ bot.command('cap', async (ctx) => {
             
             if (!db.userBackpacks[userId]) db.userBackpacks[userId] = [];
             
-            // اصلاح ذخیره سازی: آیدی عددی و ثابت کاراکتر در کل اکانت‌ها یکسان ثبت می‌شود
             db.userBackpacks[userId].push({
-                id: activeSpawn.id, 
+                id: Number(activeSpawn.id), 
                 name: activeSpawn.fullName,
                 anime: activeSpawn.anime,
                 rarity: activeSpawn.rarityKey,
@@ -300,9 +296,15 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
         
         userState.data.rarity = selectedRarity;
         const db = readDB();
-        const nextId = db.animeEdits && db.animeEdits.length > 0 
-            ? Math.max(...db.animeEdits.map(e => e.id)) + 1 
-            : 1;
+        
+        // اصلاح فرمول آیدی: محاسبه مرتب بر اساس بزرگ‌ترین آیدیِ موجود
+        let nextId = 1;
+        if (db.animeEdits && db.animeEdits.length > 0) {
+            const ids = db.animeEdits.map(e => Number(e.id)).filter(id => !isNaN(id));
+            if (ids.length > 0) {
+                nextId = Math.max(...ids) + 1;
+            }
+        }
         userState.data.id = nextId;
 
         db.animeEdits.push(userState.data);
@@ -360,7 +362,7 @@ bot.action(/manage_view_(\d+)/, (ctx) => {
         ctx.answerCbQuery().catch(()=>{});
         const editId = parseInt(ctx.match[1]);
         const db = readDB();
-        const edit = db.animeEdits.find(e => e.id === editId);
+        const edit = db.animeEdits.find(e => Number(e.id) === editId);
 
         if (!edit) return ctx.reply('Edit not found!').catch(()=>{});
 
@@ -401,7 +403,7 @@ bot.action(/apply_rarity_(\d+)_(.+)/, (ctx) => {
         const newRarity = ctx.match[2];
 
         const db = readDB();
-        const editIndex = db.animeEdits.findIndex(e => e.id === editId);
+        const editIndex = db.animeEdits.findIndex(e => Number(e.id) === editId);
 
         if (editIndex !== -1) {
             db.animeEdits[editIndex].rarity = newRarity;
@@ -423,7 +425,7 @@ bot.action(/manage_delete_(\d+)/, (ctx) => {
         const editId = parseInt(ctx.match[1]);
 
         const db = readDB();
-        db.animeEdits = db.animeEdits.filter(e => e.id !== editId);
+        db.animeEdits = db.animeEdits.filter(e => Number(e.id) !== editId);
         writeDB(db);
 
         ctx.answerCbQuery('Deleted successfully! 🗑️').catch(()=>{});
@@ -496,7 +498,7 @@ http.createServer((req, res) => {
     res.end();
 }).listen(process.env.PORT || 3000);
 
-bot.launch().then(() => console.log('✅ Final System Connected!'));
+bot.launch().then(() => console.log('✅ ID System and Deployment completely synchronized!'));
 
 process.on('uncaughtException', (err) => {
     console.error('Caught exception: ', err);
