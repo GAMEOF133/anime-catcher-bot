@@ -10,7 +10,10 @@ const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 90000 
 });
 
-const DB_PATH = path.join(__dirname, 'db.json');
+// برای جلوگیری از پاک شدن در ریل‌وی، مسیر دیتابیس را منعطف‌تر کردیم
+const DB_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH 
+    ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'db.json')
+    : path.join(__dirname, 'db.json');
 
 function readDB() {
     try {
@@ -89,8 +92,9 @@ async function spawnInChat(chatId) {
             sentMsg = await bot.telegram.sendPhoto(chatId, edit.file, { caption: captionText, parse_mode: 'Markdown' });
         }
 
+        // اصلاح کلیدی: ذخیره دقیق ایدی اصلی ادیت (edit.id) به جای آیدی‌های متفرقه
         activeSpawns[sentMsg.message_id] = {
-            id: edit.id,
+            id: edit.id, 
             name: edit.name.trim().toLowerCase(),
             fullName: edit.name,
             rarityName: rarityInfo.name,
@@ -146,7 +150,6 @@ bot.command('setup', (ctx) => {
     } catch(e) {}
 });
 
-// دستور جدید نمایش ادیت و صاحبان آن بر اساس شناسه کاراکتر
 bot.command('see', async (ctx) => {
     try {
         const msgText = ctx.message.text || '';
@@ -168,7 +171,6 @@ bot.command('see', async (ctx) => {
             return ctx.reply(`❌ No edit found with ID: ${editId}`).catch(() => {});
         }
 
-        // بررسی اینکه چه کسانی و چند بار این کاراکتر را در کوله‌پشتی خود دارند
         let owners = [];
         if (db.userBackpacks) {
             for (const [userId, items] of Object.entries(db.userBackpacks)) {
@@ -211,6 +213,7 @@ bot.command('backpack', (ctx) => {
         let report = `🎒 **${ctx.from.first_name}'s Backpack (${userItems.length} items):**\n\n`;
         userItems.forEach((item, index) => {
             const rarityName = RARITIES[item.rarity] ? RARITIES[item.rarity].name : item.rarity;
+            // اصلاح نمایش: حالا دقیقاً ایدی کاراکتر (مثل 1) نمایش داده می‌شود
             report += `${index + 1}. **${item.name}** - ${item.anime} (ID: ${item.id} - ${rarityName})\n`;
         });
 
@@ -251,8 +254,9 @@ bot.command('cap', async (ctx) => {
             
             if (!db.userBackpacks[userId]) db.userBackpacks[userId] = [];
             
+            // اصلاح ذخیره سازی: آیدی عددی و ثابت کاراکتر در کل اکانت‌ها یکسان ثبت می‌شود
             db.userBackpacks[userId].push({
-                id: activeSpawn.id,
+                id: activeSpawn.id, 
                 name: activeSpawn.fullName,
                 anime: activeSpawn.anime,
                 rarity: activeSpawn.rarityKey,
@@ -296,7 +300,9 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
         
         userState.data.rarity = selectedRarity;
         const db = readDB();
-        const nextId = db.animeEdits ? db.animeEdits.length + 1 : 1; 
+        const nextId = db.animeEdits && db.animeEdits.length > 0 
+            ? Math.max(...db.animeEdits.map(e => e.id)) + 1 
+            : 1;
         userState.data.id = nextId;
 
         db.animeEdits.push(userState.data);
@@ -490,7 +496,7 @@ http.createServer((req, res) => {
     res.end();
 }).listen(process.env.PORT || 3000);
 
-bot.launch().then(() => console.log('✅ Collection, Spawn & View System online!'));
+bot.launch().then(() => console.log('✅ Final System Connected!'));
 
 process.on('uncaughtException', (err) => {
     console.error('Caught exception: ', err);
