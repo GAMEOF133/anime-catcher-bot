@@ -22,7 +22,6 @@ function readDB() {
         const data = fs.readFileSync(DB_PATH, 'utf8');
         const parsed = JSON.parse(data);
         
-        // ایمن‌سازی دیتابیس در صورت نبودن کلیدهای اصلی
         if (!parsed.activeGroups) parsed.activeGroups = [];
         if (!parsed.animeEdits) parsed.animeEdits = [];
         if (!parsed.userBackpacks) parsed.userBackpacks = {};
@@ -129,7 +128,6 @@ bot.start((ctx) => {
     } catch(e) {}
 });
 
-// دستور کاملاً شانسی و ایمن ادمین
 bot.command('spawn', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     spawnInChat(ctx.chat.id).catch(()=>{});
@@ -148,7 +146,57 @@ bot.command('setup', (ctx) => {
     } catch(e) {}
 });
 
-// سیستم بررسی کوله‌پشتی ایمن با مدیریت خطای دیتابیس قدیمی
+// دستور جدید نمایش ادیت و صاحبان آن بر اساس شناسه کاراکتر
+bot.command('see', async (ctx) => {
+    try {
+        const msgText = ctx.message.text || '';
+        const args = msgText.replace('/see', '').trim();
+        
+        if (!args) {
+            return ctx.reply('⚠️ Please provide the Edit ID after /see (e.g., /see 1)').catch(() => {});
+        }
+
+        const editId = parseInt(args);
+        if (isNaN(editId)) {
+            return ctx.reply('⚠️ Edit ID must be a valid number!').catch(() => {});
+        }
+
+        const db = readDB();
+        const edit = db.animeEdits.find(e => e.id === editId);
+
+        if (!edit) {
+            return ctx.reply(`❌ No edit found with ID: ${editId}`).catch(() => {});
+        }
+
+        // بررسی اینکه چه کسانی و چند بار این کاراکتر را در کوله‌پشتی خود دارند
+        let owners = [];
+        if (db.userBackpacks) {
+            for (const [userId, items] of Object.entries(db.userBackpacks)) {
+                const count = items.filter(item => item.id === editId).length;
+                if (count > 0) {
+                    owners.push(`${userId} (${count} time${count > 1 ? 's' : ''})`);
+                }
+            }
+        }
+
+        const ownersList = owners.length > 0 ? owners.join(', ') : 'None';
+        const rarityInfo = RARITIES[edit.rarity] ? RARITIES[edit.rarity].name : edit.rarity;
+
+        const captionText = `ℹ️ **Anime Edit Info (View Only)**\n\n**ID:** ${edit.id}\n**Character:** ${edit.name}\n**Anime:** ${edit.anime}\n**Rarity:** ${rarityInfo}\n\n👥 **Users:** ${ownersList}`;
+
+        if (edit.type === 'video') {
+            await bot.telegram.sendVideo(ctx.chat.id, edit.file, { caption: captionText, parse_mode: 'Markdown' });
+        } else if (edit.type === 'animation') {
+            await bot.telegram.sendAnimation(ctx.chat.id, edit.file, { caption: captionText, parse_mode: 'Markdown' });
+        } else {
+            await bot.telegram.sendPhoto(ctx.chat.id, edit.file, { caption: captionText, parse_mode: 'Markdown' });
+        }
+
+    } catch (e) {
+        console.error('Error in see command:', e.message);
+    }
+});
+
 bot.command('backpack', (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -163,7 +211,7 @@ bot.command('backpack', (ctx) => {
         let report = `🎒 **${ctx.from.first_name}'s Backpack (${userItems.length} items):**\n\n`;
         userItems.forEach((item, index) => {
             const rarityName = RARITIES[item.rarity] ? RARITIES[item.rarity].name : item.rarity;
-            report += `${index + 1}. **${item.name}** - ${item.anime} (${rarityName})\n`;
+            report += `${index + 1}. **${item.name}** - ${item.anime} (ID: ${item.id} - ${rarityName})\n`;
         });
 
         return ctx.reply(report, { parse_mode: 'Markdown' }).catch(() => {});
@@ -442,7 +490,7 @@ http.createServer((req, res) => {
     res.end();
 }).listen(process.env.PORT || 3000);
 
-bot.launch().then(() => console.log('✅ 100% Fixed and Stable System online!'));
+bot.launch().then(() => console.log('✅ Collection, Spawn & View System online!'));
 
 process.on('uncaughtException', (err) => {
     console.error('Caught exception: ', err);
