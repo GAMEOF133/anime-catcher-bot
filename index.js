@@ -1,4 +1,5 @@
-const { Telegraf, Scenes, session } = require('telegraf');
+const { Telegraf, Scenes } = require('telegraf');
+const { session } = require('@telegraf/session');
 const fs = require('fs');
 const path = require('path');
 
@@ -6,7 +7,6 @@ const path = require('path');
 const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
 const ADMIN_ID = 7334867757; 
 
-// در هاست خارجی نیازی به پروکسی و ایجنت نیست
 const bot = new Telegraf(BOT_TOKEN, { 
     handlerTimeout: 90000 
 });
@@ -34,12 +34,15 @@ const RARITIES = {
     LIMITED: { name: 'Limited 🟣', chance: 1 }
 };
 
+// یک حافظه موقت و مطمئن برای ذخیره داده‌های ادمین در طول مراحل ویزارد
+let tempAdminStorage = {};
+
 // 2. Wizard Scene for Adding New Edits
 const addEditWizard = new Scenes.WizardScene(
     'add_edit_wizard',
     (ctx) => {
         ctx.reply('Please send/forward the Video or Photo for this edit:').catch(() => {});
-        ctx.scene.session.editData = {}; 
+        tempAdminStorage[ctx.from.id] = {}; // ایجاد پوشه موقت برای این کاربر
         return ctx.wizard.next();
     },
     (ctx) => {
@@ -63,8 +66,10 @@ const addEditWizard = new Scenes.WizardScene(
             return;
         }
 
-        ctx.scene.session.editData.file = fileId;
-        ctx.scene.session.editData.type = fileType;
+        if (!tempAdminStorage[ctx.from.id]) tempAdminStorage[ctx.from.id] = {};
+        tempAdminStorage[ctx.from.id].file = fileId;
+        tempAdminStorage[ctx.from.id].type = fileType;
+        
         ctx.reply('What is the Character Name?').catch(() => {});
         return ctx.wizard.next();
     },
@@ -73,7 +78,9 @@ const addEditWizard = new Scenes.WizardScene(
             ctx.reply('Please type a text name for the character:').catch(() => {});
             return;
         }
-        ctx.scene.session.editData.name = ctx.message.text;
+        if (!tempAdminStorage[ctx.from.id]) return ctx.scene.leave();
+        tempAdminStorage[ctx.from.id].name = ctx.message.text;
+        
         ctx.reply('What is the Anime Name?').catch(() => {});
         return ctx.wizard.next();
     },
@@ -82,7 +89,8 @@ const addEditWizard = new Scenes.WizardScene(
             ctx.reply('Please type a text name for the anime:').catch(() => {});
             return;
         }
-        ctx.scene.session.editData.anime = ctx.message.text;
+        if (!tempAdminStorage[ctx.from.id]) return ctx.scene.leave();
+        tempAdminStorage[ctx.from.id].anime = ctx.message.text;
 
         const buttons = Object.keys(RARITIES).map(key => [{ text: RARITIES[key].name, callback_data: `set_rarity_${key}` }]);
         ctx.reply('Select the Rarity for this edit:', {
@@ -96,7 +104,7 @@ const addEditWizard = new Scenes.WizardScene(
 );
 
 const stage = new Scenes.Stage([addEditWizard]);
-bot.use(session());
+bot.use(session()); 
 bot.use(stage.middleware());
 
 function getRandomEdit() {
@@ -184,6 +192,7 @@ bot.command('setup', (ctx) => {
 bot.action('admin_start_add', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(() => {});
     ctx.answerCbQuery().catch(() => {});
+    tempAdminStorage[ctx.from.id] = {}; 
     return ctx.scene.enter('add_edit_wizard');
 });
 
@@ -191,13 +200,13 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(() => {});
     
     const selectedRarity = ctx.match[1];
+    const editData = tempAdminStorage[ctx.from.id];
     
-    if (!ctx.scene.session || !ctx.scene.session.editData) {
-        await ctx.answerCbQuery('Session expired. Please try again.').catch(() => {});
+    if (!editData || !editData.file) {
+        await ctx.answerCbQuery('Session error. Please use ➕ Add Edit again.', { show_alert: true }).catch(() => {});
         return ctx.scene.leave();
     }
     
-    const editData = ctx.scene.session.editData;
     editData.rarity = selectedRarity;
 
     const db = readDB();
@@ -206,6 +215,8 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
 
     db.animeEdits.push(editData);
     writeDB(db);
+
+    delete tempAdminStorage[ctx.from.id]; // پاک کردن تِمپ بعد از ذخیره موفق
 
     await ctx.answerCbQuery().catch(() => {});
     await ctx.reply(`✅ Successfully added dynamically!\n\nCode ID: ${editData.id}\nCharacter: ${editData.name}\nAnime: ${editData.anime}\nRarity: ${RARITIES[selectedRarity].name}`).catch(() => {});
@@ -232,11 +243,10 @@ bot.action(/catch_(\d+)/, (ctx) => {
 
 setInterval(spawnEditInGroups, 300000);
 
-// وب‌سایت‌های رایگان مثل رندر نیاز به یک پورت فعال برای بیدار ماندن دارند
 const http = require('http');
 http.createServer((req, res) => {
     res.write("Bot is Running!");
     res.end();
 }).listen(process.env.PORT || 3000);
 
-bot.launch().then(() => console.log('✅ Bot deployed on Host successfully!'));
+bot.launch().then(() => console.log('✅ Stable Anime Bot is live on Host!'));
