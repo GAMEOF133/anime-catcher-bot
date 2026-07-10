@@ -10,9 +10,30 @@ const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 90000 
 });
 
-const DB_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH 
-    ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'db.json')
-    : path.join(__dirname, 'db.json');
+// مسیر دیتابیس دائمی و دیتابیس قدیمی
+const DB_PATH = '/data/db.json';
+const OLD_DB_PATH = path.join(__dirname, 'db.json');
+
+// تابع هوشمند برای انتقال دیتای قدیمی به هارد دائمی جدید
+function migrateOldData() {
+    try {
+        if (!fs.existsSync('/data')) {
+            fs.mkdirSync('/data', { recursive: true });
+        }
+
+        // اگر فایل روی هارد دائمی وجود ندارد، اما فایل قدیمی وجود دارد: آن را کپی کن
+        if (!fs.existsSync(DB_PATH) && fs.existsSync(OLD_DB_PATH)) {
+            const oldData = fs.readFileSync(OLD_DB_PATH, 'utf8');
+            fs.writeFileSync(DB_PATH, oldData, 'utf8');
+            console.log('✅ Successfully migrated old database to Railway Volume!');
+        }
+    } catch (err) {
+        console.error('Migration Error:', err.message);
+    }
+}
+
+// اجرای انتقال دیتا قبل از هر کاری
+migrateOldData();
 
 function readDB() {
     try {
@@ -30,12 +51,16 @@ function readDB() {
         
         return parsed;
     } catch (err) {
+        console.error('Read DB Error:', err.message);
         return { activeGroups: [], animeEdits: [], userBackpacks: {} };
     }
 }
 
 function writeDB(data) {
     try {
+        if (!fs.existsSync('/data')) {
+            fs.mkdirSync('/data', { recursive: true });
+        }
         fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
         console.error('Failed to write to DB:', err.message);
@@ -197,7 +222,6 @@ bot.command('see', async (ctx) => {
     }
 });
 
-// ➕ کامند جدید اختصاصی برای ادمین جهت دریافت ادیت با آیدی
 bot.command('get', async (ctx) => {
     try {
         if (ctx.from.id !== ADMIN_ID) return;
