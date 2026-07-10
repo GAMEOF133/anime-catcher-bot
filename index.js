@@ -10,37 +10,31 @@ const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 90000 
 });
 
-// مسیر دیتابیس دائمی و دیتابیس قدیمی
+// Paths - متصل به هارد دائمی ریل‌وی
 const DB_PATH = '/data/db.json';
-const OLD_DB_PATH = path.join(__dirname, 'db.json');
 
-// تابع هوشمند برای انتقال دیتای قدیمی به هارد دائمی جدید
-function migrateOldData() {
+// ساخت پوشه و فایل دیتابیس در صورت عدم وجود
+function initDatabase() {
     try {
         if (!fs.existsSync('/data')) {
             fs.mkdirSync('/data', { recursive: true });
         }
-
-        // اگر فایل روی هارد دائمی وجود ندارد، اما فایل قدیمی وجود دارد: آن را کپی کن
-        if (!fs.existsSync(DB_PATH) && fs.existsSync(OLD_DB_PATH)) {
-            const oldData = fs.readFileSync(OLD_DB_PATH, 'utf8');
-            fs.writeFileSync(DB_PATH, oldData, 'utf8');
-            console.log('✅ Successfully migrated old database to Railway Volume!');
+        if (!fs.existsSync(DB_PATH)) {
+            const initialDB = { activeGroups: [], animeEdits: [], userBackpacks: {} };
+            fs.writeFileSync(DB_PATH, JSON.stringify(initialDB, null, 2), 'utf8');
+            console.log('✅ Fresh database initialized on Railway Volume.');
         }
     } catch (err) {
-        console.error('Migration Error:', err.message);
+        console.error('Database Initialization Error:', err.message);
     }
 }
 
-// اجرای انتقال دیتا قبل از هر کاری
-migrateOldData();
+initDatabase();
 
 function readDB() {
     try {
         if (!fs.existsSync(DB_PATH)) {
-            const initialDB = { activeGroups: [], animeEdits: [], userBackpacks: {} };
-            fs.writeFileSync(DB_PATH, JSON.stringify(initialDB, null, 2), 'utf8');
-            return initialDB;
+            return { activeGroups: [], animeEdits: [], userBackpacks: {} };
         }
         const data = fs.readFileSync(DB_PATH, 'utf8');
         const parsed = JSON.parse(data);
@@ -102,9 +96,12 @@ function getRandomEdit() {
 async function spawnInChat(chatId) {
     try {
         const edit = getRandomEdit();
-        if (!edit) return;
+        if (!edit) {
+            console.log('No edits available in database to spawn!');
+            return;
+        }
 
-        const rarityInfo = RARITIES[edit.rarity];
+        const rarityInfo = RARITIES[edit.rarity] || RARITIES.RARE;
         const captionText = `✨ **An Anime Edit Appeared!** ✨\n\n**Anime:** ${edit.anime}\n**Rarity:** ${rarityInfo.name}\n\n🗣️ **How to catch?** Reply to this message with:\n/cap CharacterName`;
 
         let sentMsg;
@@ -157,7 +154,13 @@ bot.start((ctx) => {
 
 bot.command('spawn', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    spawnInChat(ctx.chat.id).catch(()=>{});
+    const db = readDB();
+    if (!db.animeEdits || db.animeEdits.length === 0) {
+        return ctx.reply('❌ دیتابیس خالی است! ابتدا در پی‌وی ربات از منوی ادمین یک ادیت اضافه کنید تا سیستم فعال شود.').catch(()=>{});
+    }
+    spawnInChat(ctx.chat.id).catch((err) => {
+        ctx.reply(`Error during spawn: ${err.message}`).catch(()=>{});
+    });
 });
 
 bot.command('setup', (ctx) => {
