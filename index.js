@@ -63,11 +63,12 @@ function writeDB(data) {
 }
 
 const RARITIES = {
-    RARE: { name: 'Rare 🟢', chance: 50 },
+    RARE: { name: 'Rare 🟢', chance: 49.5 },
     EPIC: { name: 'Epic 🔵', chance: 30 },
     LEGENDARY: { name: 'Legendary 🟡', chance: 14 },
     MYTHIC: { name: 'Mythic 🔴', chance: 5 },
-    LIMITED: { name: 'Limited 🟣', chance: 1 }
+    LIMITED: { name: 'Limited 🟣', chance: 1.4 },
+    SECRET: { name: 'Secret 💎', chance: 0.1 }
 };
 
 let adminState = {};
