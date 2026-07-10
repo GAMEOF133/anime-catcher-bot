@@ -34,7 +34,6 @@ const RARITIES = {
 };
 
 let adminState = {};
-// ذخیره وضعیت ادیت‌های فعال در گروه‌ها برای سیستم حدس کلمه
 let activeSpawns = {};
 
 function getRandomEdit() {
@@ -63,7 +62,7 @@ async function spawnInChat(chatId) {
     if (!edit) return;
 
     const rarityInfo = RARITIES[edit.rarity];
-    const captionText = `✨ **An Anime Edit Appeared!** ✨\n\n**Anime:** ${edit.anime}\n**Rarity:** ${rarityInfo.name}\n\n🗣️ **How to catch?** Reply to this message with:\n`/cap CharacterName``;
+    const captionText = `✨ **An Anime Edit Appeared!** ✨\n\n**Anime:** ${edit.anime}\n**Rarity:** ${rarityInfo.name}\n\n🗣️ **How to catch?** Reply to this message with:\n/cap CharacterName`;
 
     try {
         let sentMsg;
@@ -75,7 +74,6 @@ async function spawnInChat(chatId) {
             sentMsg = await bot.telegram.sendPhoto(chatId, edit.file, { caption: captionText, parse_mode: 'Markdown' });
         }
 
-        // ثبت اطلاعات ادیت فعال روی پیام فرستاده شده
         activeSpawns[sentMsg.message_id] = {
             id: edit.id,
             name: edit.name.trim().toLowerCase(),
@@ -95,7 +93,6 @@ function spawnEditInGroups() {
     db.activeGroups.forEach((chatId) => spawnInChat(chatId));
 }
 
-// پیام شروع و پنل ادمین
 bot.start((ctx) => {
     if (ctx.from.id === ADMIN_ID && ctx.chat.type === 'private') {
         adminState[ctx.from.id] = null; 
@@ -127,11 +124,9 @@ bot.command('setup', (ctx) => {
     ctx.reply('✅ Auto spawn system active! An edit will spawn every 5 minutes.').catch(() => {});
 });
 
-// سیستم حدس کلمه با فرمان /cap
 bot.command('cap', async (ctx) => {
     if (ctx.chat.type === 'private') return;
     
-    // بررسی ریپلی بودن پیام
     if (!ctx.message.reply_to_message) {
         return ctx.reply('⚠️ Please reply to the anime edit message!').catch(() => {});
     }
@@ -144,21 +139,47 @@ bot.command('cap', async (ctx) => {
         return ctx.reply('❌ This edit has already been captured by someone else!').catch(() => {});
     }
 
-    // استخراج متن حدس زده شده
     const guess = ctx.message.text.replace('/cap', '').trim().toLowerCase();
     if (!guess) {
         return ctx.reply('⚠️ Please provide the character name after /cap (e.g., /cap Diego)').catch(() => {});
     }
 
-    // بررسی درست بودن حدس
     if (guess === activeSpawn.name) {
         activeSpawn.captured = true;
         
-        // آپدیت کپشن پیام اصلی اسپان
         try {
             await bot.telegram.editMessageCaption(ctx.chat.id, replyMsgId, null, `🎒 **Captured by ${ctx.from.first_name}!** 🎉\n\n**Character Name:** ${activeSpawn.fullName}\n**Rarity:** ${activeSpawn.rarityName}`, {
                 parse_mode: 'Markdown'
             });
         } catch(e){}
 
-        return ctx.reply(`🎉 **Congratulations ${ctx.from.first_name}!** You guessed correctly and captured **${activeSpawn.fullName
+        return ctx.reply(`🎉 **Congratulations ${ctx.from.first_name}!** You guessed correctly and captured **${activeSpawn.fullName}**!`).catch(() => {});
+    } else {
+        return ctx.reply('❌ Wrong name! Try again.').catch(() => {});
+    }
+});
+
+bot.action('admin_start_add', (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!');
+    ctx.answerCbQuery();
+    adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
+    return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
+});
+
+bot.action(/set_rarity_(.+)/, async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!');
+    const selectedRarity = ctx.match[1];
+    const userState = adminState[ctx.from.id];
+    
+    if (!userState || !userState.data || !userState.data.file) {
+        return ctx.answerCbQuery('Session expired.', { show_alert: true });
+    }
+    
+    userState.data.rarity = selectedRarity;
+    const db = readDB();
+    const nextId = db.animeEdits.length + 1; // تنظیم شروع آیدی دقیقاً از ۱ و به ترتیب تعداد کاراکترها
+    userState.data.id = nextId;
+
+    db.animeEdits.push(userState.data);
+    writeDB(db);
+    adminState
