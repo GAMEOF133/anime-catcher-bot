@@ -4,7 +4,11 @@ const path = require('path');
 
 // 1. Configuration
 const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
-const ADMIN_IDS = [7334867757, 6155765664]; // تعریف لیست ادمین‌هاایدی‌های ادمین
+const ADMIN_IDS = [7334867757, 6155765664];
+
+// تابع کمکی برای چک کردن ادمین
+const isAdmin = (id) => ADMIN_IDS.includes(id);
+
 const bot = new Telegraf(BOT_TOKEN, { 
     handlerTimeout: 90000 
 });
@@ -31,14 +35,13 @@ function readDB() {
         if (!parsed.activeGroups) parsed.activeGroups = [];
         if (!parsed.animeEdits) parsed.animeEdits = [];
         if (!parsed.userBackpacks) parsed.userBackpacks = {};
-        if (!parsed.userGeo) parsed.userGeo = {}; // اضافه شدن Geo
+        if (!parsed.userGeo) parsed.userGeo = {};
         return parsed;
     } catch (err) { return { activeGroups: [], animeEdits: [], userBackpacks: {}, userGeo: {} }; }
 }
 
 function writeDB(data) {
     try {
-        if (!fs.existsSync('/data')) fs.mkdirSync('/data', { recursive: true });
         fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) { console.error('Failed to write to DB:', err.message); }
 }
@@ -69,16 +72,10 @@ function getRandomEdit() {
     return pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : db.animeEdits[0];
 }
 
-// تابع اصلاح شده برای پشتیبانی از آیدی خاص
 async function spawnInChat(chatId, specificId = null) {
     try {
         const db = readDB();
-        let edit;
-        if (specificId) {
-            edit = db.animeEdits.find(e => Number(e.id) === specificId);
-        } else {
-            edit = getRandomEdit();
-        }
+        let edit = specificId ? db.animeEdits.find(e => Number(e.id) === specificId) : getRandomEdit();
         if (!edit) return;
 
         const rarityInfo = RARITIES[edit.rarity] || RARITIES.RARE;
@@ -98,26 +95,28 @@ function spawnEditInGroups() {
     db.activeGroups.forEach((chatId) => spawnInChat(chatId).catch(()=>{}));
 }
 
-// دستور جدید Geo
+// دستورات ربات
+bot.start((ctx) => {
+    if (isAdmin(ctx.from.id) && ctx.chat.type === 'private') {
+        return ctx.reply('Admin Menu:', { reply_markup: { inline_keyboard: [[{ text: '➕ Add', callback_data: 'admin_start_add' }], [{ text: '📂 Manage', callback_data: 'admin_manage_list_0' }]] } });
+    }
+    ctx.reply('Welcome! Use /backpack to see items or /geo for points.');
+});
+
 bot.command('geo', (ctx) => {
     const db = readDB();
-    const geo = db.userGeo[ctx.from.id] || 0;
-    ctx.reply(`💰 **Your Balance:** ${geo} Geo`);
+    ctx.reply(`💰 **Your Balance:** ${db.userGeo[ctx.from.id] || 0} Geo`);
 });
 
-// دستور Spawn آپدیت شده
 bot.command('spawn', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
+    if (!isAdmin(ctx.from.id)) return;
     const args = ctx.message.text.replace('/spawn', '').trim();
-    const specificId = args ? parseInt(args) : null;
-    spawnInChat(ctx.chat.id, specificId);
+    spawnInChat(ctx.chat.id, args ? parseInt(args) : null);
 });
 
-// دستور Cap اصلاح شده (افزودن Geo بعد از کپچر)
 bot.command('cap', async (ctx) => {
     try {
-        if (ctx.chat.type === 'private') return;
-        if (!ctx.message.reply_to_message) return;
+        if (ctx.chat.type === 'private' || !ctx.message.reply_to_message) return;
         const activeSpawn = activeSpawns[ctx.message.reply_to_message.message_id];
         if (!activeSpawn || activeSpawn.captured) return;
 
@@ -126,28 +125,28 @@ bot.command('cap', async (ctx) => {
             activeSpawn.captured = true;
             const db = readDB();
             const userId = ctx.from.id;
-            
-            // ثبت در بک‌پک
             if (!db.userBackpacks[userId]) db.userBackpacks[userId] = [];
             db.userBackpacks[userId].push({ id: activeSpawn.id, name: activeSpawn.fullName, anime: activeSpawn.anime, rarity: activeSpawn.rarityKey, caughtAt: new Date().toISOString() });
-            
-            // دادن 100 Geo به عنوان پاداش
             db.userGeo[userId] = (db.userGeo[userId] || 0) + 100;
             writeDB(db);
-
             await bot.telegram.editMessageCaption(ctx.chat.id, ctx.message.reply_to_message.message_id, undefined, `🎒 **Captured by ${ctx.from.first_name}!** 🎉\n\n**Character:** ${activeSpawn.fullName}\n**Reward:** +100 Geo`, { parse_mode: 'Markdown' });
-            return ctx.reply(`🎉 **Congratulations!** You got ${activeSpawn.fullName} and +100 Geo!`).catch(() => {});
+            return ctx.reply(`🎉 **Congratulations!** You got +100 Geo!`);
         }
     } catch(e) {}
 });
 
-// --- بقیه دستورات قبلی شما (start, setup, gift, manage, etc.) دقیقاً اینجا قرار می‌گیرند ---
-// (از دستور start تا انتهای کد قبل از setInterval را اینجا اضافه کنید)
+// مدیریت ادمین و سایر اکشن‌ها باید با isAdmin چک شوند
+bot.action('admin_start_add', (ctx) => {
+    if (!isAdmin(ctx.from.id)) return;
+    adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
+    ctx.answerCbQuery();
+    ctx.reply('Send the file:');
+});
 
-// تایمر به 10 دقیقه (600,000 میلی‌ثانیه) تغییر یافت
+// تایمر ۱۰ دقیقه
 setInterval(spawnEditInGroups, 600000);
 
 const http = require('http');
 http.createServer((req, res) => { res.write("Bot is Running!"); res.end(); }).listen(process.env.PORT || 3000);
 
-bot.launch().then(() => console.log('✅ Bot Updated: ID Spawn, Geo System & 10m Interval Active!'));
+bot.launch().then(() => console.log('✅ Bot Fully Active with Multi-Admin Support!'));
