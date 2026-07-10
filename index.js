@@ -4,8 +4,7 @@ const path = require('path');
 
 // 1. Configuration
 const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
-const ADMIN_ID = 7334867757; 
-
+const ADMIN_IDS = [7334867757, 6155765664]; // ایدی‌های ادمین
 const bot = new Telegraf(BOT_TOKEN, { 
     handlerTimeout: 90000 
 });
