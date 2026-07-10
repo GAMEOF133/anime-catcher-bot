@@ -4,7 +4,8 @@ const path = require('path');
 
 // 1. Configuration
 const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
-const ADMIN_ID = 7334867757; 
+const ADMIN_IDS = [7334867757, 6155765664]; 
+const isAdmin = (id) => ADMIN_IDS.includes(id);
 
 const bot = new Telegraf(BOT_TOKEN, { 
     handlerTimeout: 90000 
@@ -71,7 +72,7 @@ const RARITIES = {
 
 let adminState = {};
 let activeSpawns = {};
-let pendingGifts = {}; // برای ذخیره موقت وضعیت هدیه‌ها قبل از تایید
+let pendingGifts = {}; 
 
 function getRandomEdit() {
     const db = readDB();
@@ -135,7 +136,7 @@ function spawnEditInGroups() {
 
 bot.start((ctx) => {
     try {
-        if (ctx.from.id === ADMIN_ID && ctx.chat.type === 'private') {
+        if (isAdmin(ctx.from.id) && ctx.chat.type === 'private') {
             adminState[ctx.from.id] = null; 
             return ctx.reply('Welcome back Admin! Choose an option:', {
                 reply_markup: {
@@ -151,7 +152,7 @@ bot.start((ctx) => {
 });
 
 bot.command('spawn', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
+    if (!isAdmin(ctx.from.id)) return;
     const db = readDB();
     if (!db.animeEdits || db.animeEdits.length === 0) {
         return ctx.reply('❌ دیتابیس خالی است! ابتدا در پی‌وی ربات از منوی ادمین یک ادیت اضافه کنید تا سیستم فعال شود.').catch(()=>{});
@@ -207,7 +208,6 @@ bot.command('gift', async (ctx) => {
         const db = readDB();
         const senderItems = db.userBackpacks[senderId] || [];
         
-        // پیدا کردن آیتم در بک‌پک فرستنده
         const itemIndex = senderItems.findIndex(item => Number(item.id) === editId);
 
         if (itemIndex === -1) {
@@ -217,7 +217,6 @@ bot.command('gift', async (ctx) => {
         const editToGift = senderItems[itemIndex];
         const giftKey = `${ctx.chat.id}_${ctx.message.message_id}`;
 
-        // ذخیره اطلاعات هدیه به صورت موقت
         pendingGifts[giftKey] = {
             senderId: senderId,
             senderName: ctx.from.first_name,
@@ -253,7 +252,6 @@ bot.action(/gift_confirm_(.+)/, (ctx) => {
             return ctx.answerCbQuery('This gift session has expired. ❌', { show_alert: true }).catch(()=>{});
         }
 
-        // فقط فرستنده هدیه اجازه دارد تاییدش کند
         if (ctx.from.id !== giftData.senderId) {
             return ctx.answerCbQuery('❌ Only the person sending the gift can confirm this!', { show_alert: true }).catch(()=>{});
         }
@@ -261,7 +259,6 @@ bot.action(/gift_confirm_(.+)/, (ctx) => {
         const db = readDB();
         const senderItems = db.userBackpacks[giftData.senderId] || [];
         
-        // چک کردن مجدد وجود آیتم برای امنیت بیشتر
         const itemIndex = senderItems.findIndex(item => Number(item.id) === giftData.editId);
 
         if (itemIndex === -1) {
@@ -270,11 +267,9 @@ bot.action(/gift_confirm_(.+)/, (ctx) => {
             return ctx.editMessageText('❌ Transaction failed: Item is no longer in your backpack.').catch(() => {});
         }
 
-        // ۱. حذف از بک‌پک فرستنده
         const [movedItem] = senderItems.splice(itemIndex, 1);
         db.userBackpacks[giftData.senderId] = senderItems;
 
-        // ۲. اضافه کردن به بک‌پک گیرنده
         if (!db.userBackpacks[giftData.targetId]) {
             db.userBackpacks[giftData.targetId] = [];
         }
@@ -300,7 +295,6 @@ bot.action(/gift_cancel_(.+)/, (ctx) => {
             return ctx.answerCbQuery('This gift session has expired. ❌', { show_alert: true }).catch(()=>{});
         }
 
-        // فقط فرستنده هدیه اجازه دارد لغوش کند
         if (ctx.from.id !== giftData.senderId) {
             return ctx.answerCbQuery('❌ Only the person sending the gift can cancel this!', { show_alert: true }).catch(()=>{});
         }
@@ -365,7 +359,7 @@ bot.command('see', async (ctx) => {
 
 bot.command('get', async (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return;
+        if (!isAdmin(ctx.from.id)) return;
 
         const msgText = ctx.message.text || '';
         const args = msgText.replace('/get', '').trim();
@@ -386,11 +380,11 @@ bot.command('get', async (ctx) => {
             return ctx.reply(`❌ No edit found with ID: ${editId} in database.`).catch(() => {});
         }
 
-        if (!db.userBackpacks[ADMIN_ID]) {
-            db.userBackpacks[ADMIN_ID] = [];
+        if (!db.userBackpacks[ctx.from.id]) {
+            db.userBackpacks[ctx.from.id] = [];
         }
 
-        db.userBackpacks[ADMIN_ID].push({
+        db.userBackpacks[ctx.from.id].push({
             id: Number(edit.id), 
             name: edit.name,
             anime: edit.anime,
@@ -488,7 +482,7 @@ bot.command('cap', async (ctx) => {
 
 bot.action('admin_start_add', (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
         adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
         return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
@@ -497,7 +491,7 @@ bot.action('admin_start_add', (ctx) => {
 
 bot.action(/set_rarity_(.+)/, async (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         const selectedRarity = ctx.match[1];
         const userState = adminState[ctx.from.id];
         
@@ -528,7 +522,7 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
 
 bot.action(/admin_manage_list_(\d+)/, (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
         
         const page = parseInt(ctx.match[1]);
@@ -568,7 +562,7 @@ bot.action(/admin_manage_list_(\d+)/, (ctx) => {
 
 bot.action(/manage_view_(\d+)/, (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
         const editId = parseInt(ctx.match[1]);
         const db = readDB();
@@ -591,7 +585,7 @@ bot.action(/manage_view_(\d+)/, (ctx) => {
 
 bot.action(/manage_chrarity_(\d+)/, (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
         const editId = ctx.match[1];
         
@@ -608,7 +602,7 @@ bot.action(/manage_chrarity_(\d+)/, (ctx) => {
 
 bot.action(/apply_rarity_(\d+)_(.+)/, (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         const editId = parseInt(ctx.match[1]);
         const newRarity = ctx.match[2];
 
@@ -631,7 +625,7 @@ bot.action(/apply_rarity_(\d+)_(.+)/, (ctx) => {
 
 bot.action(/manage_delete_(\d+)/, (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         const editId = parseInt(ctx.match[1]);
 
         const db = readDB();
@@ -647,7 +641,7 @@ bot.action(/manage_delete_(\d+)/, (ctx) => {
 
 bot.action('back_to_menu', (ctx) => {
     try {
-        if (ctx.from.id !== ADMIN_ID) return;
+        if (!isAdmin(ctx.from.id)) return;
         ctx.answerCbQuery().catch(()=>{});
         ctx.editMessageText('Welcome back Admin! Choose an option:', {
             reply_markup: {
@@ -662,7 +656,7 @@ bot.action('back_to_menu', (ctx) => {
 
 bot.on('message', async (ctx) => {
     try {
-        if (ctx.chat.type !== 'private' || ctx.from.id !== ADMIN_ID) return;
+        if (ctx.chat.type !== 'private' || !isAdmin(ctx.from.id)) return;
         const userState = adminState[ctx.from.id];
         if (!userState) return;
 
