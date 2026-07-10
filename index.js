@@ -22,7 +22,11 @@ function readDB() {
 }
 
 function writeDB(data) {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
+    try {
+        fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+        console.error('Failed to write to DB:', err.message);
+    }
 }
 
 const RARITIES = {
@@ -38,7 +42,7 @@ let activeSpawns = {};
 
 function getRandomEdit() {
     const db = readDB();
-    if (db.animeEdits.length === 0) return null;
+    if (!db.animeEdits || db.animeEdits.length === 0) return null;
 
     const roll = Math.random() * 100;
     let currentChance = 0;
@@ -89,14 +93,245 @@ async function spawnInChat(chatId) {
 
 function spawnEditInGroups() {
     const db = readDB();
-    if (db.activeGroups.length === 0) return;
-    db.activeGroups.forEach((chatId) => spawnInChat(chatId));
+    if (!db.activeGroups || db.activeGroups.length === 0) return;
+    db.activeGroups.forEach((chatId) => spawnInChat(chatId).catch(()=>{}));
 }
 
 bot.start((ctx) => {
-    if (ctx.from.id === ADMIN_ID && ctx.chat.type === 'private') {
-        adminState[ctx.from.id] = null; 
-        return ctx.reply('Welcome back Admin! Choose an option:', {
+    try {
+        if (ctx.from.id === ADMIN_ID && ctx.chat.type === 'private') {
+            adminState[ctx.from.id] = null; 
+            return ctx.reply('Welcome back Admin! Choose an option:', {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '➕ Add New Edit', callback_data: 'admin_start_add' }],
+                        [{ text: '📂 Manage Edits (Edit/Delete)', callback_data: 'admin_manage_list_0' }]
+                    ]
+                }
+            }).catch(() => {});
+        }
+        ctx.reply('Welcome to Anime Catcher Bot! Add me to a group and send /setup to activate.').catch(() => {});
+    } catch(e) {}
+});
+
+bot.command('amir', (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    spawnInChat(ctx.chat.id).catch(()=>{});
+});
+
+bot.command('setup', (ctx) => {
+    try {
+        if (ctx.chat.type === 'private') return ctx.reply('This command only works in groups!').catch(()=>{});
+        const chatId = ctx.chat.id;
+        const db = readDB();
+        if (!db.activeGroups.includes(chatId)) {
+            db.activeGroups.push(chatId);
+            writeDB(db);
+        }
+        ctx.reply('✅ Auto spawn system active! An edit will spawn every 5 minutes.').catch(() => {});
+    } catch(e) {}
+});
+
+bot.command('cap', async (ctx) => {
+    try {
+        if (ctx.chat.type === 'private') return;
+        
+        if (!ctx.message.reply_to_message) {
+            return ctx.reply('⚠️ Please reply to the anime edit message!').catch(() => {});
+        }
+
+        const replyMsgId = ctx.message.reply_to_message.message_id;
+        const activeSpawn = activeSpawns[replyMsgId];
+
+        if (!activeSpawn) return;
+        if (activeSpawn.captured) {
+            return ctx.reply('❌ This edit has already been captured by someone else!').catch(() => {});
+        }
+
+        let msgText = ctx.message.text || '';
+        const guess = msgText.replace('/cap', '').trim().toLowerCase();
+        
+        if (!guess) {
+            return ctx.reply('⚠️ Please provide the character name after /cap (e.g., /cap Diego)').catch(() => {});
+        }
+
+        if (guess === activeSpawn.name) {
+            activeSpawn.captured = true;
+            
+            try {
+                await bot.telegram.editMessageCaption(ctx.chat.id, replyMsgId, undefined, `🎒 **Captured by ${ctx.from.first_name}!** 🎉\n\n**Character Name:** ${activeSpawn.fullName}\n**Rarity:** ${activeSpawn.rarityName}`, {
+                    parse_mode: 'Markdown'
+                });
+            } catch(e){
+                console.error('Failed to edit caption:', e.message);
+            }
+
+            return ctx.reply(`🎉 **Congratulations ${ctx.from.first_name}!** You guessed correctly and captured **${activeSpawn.fullName}**!`).catch(() => {});
+        } else {
+            return ctx.reply('❌ Wrong name! Try again.').catch(() => {});
+        }
+    } catch(e) {
+        console.error('Error in cap command:', e.message);
+    }
+});
+
+bot.action('admin_start_add', (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        ctx.answerCbQuery().catch(()=>{});
+        adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
+        return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
+    } catch(e) {}
+});
+
+bot.action(/set_rarity_(.+)/, async (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        const selectedRarity = ctx.match[1];
+        const userState = adminState[ctx.from.id];
+        
+        if (!userState || !userState.data || !userState.data.file) {
+            return ctx.answerCbQuery('Session expired.', { show_alert: true }).catch(()=>{});
+        }
+        
+        userState.data.rarity = selectedRarity;
+        const db = readDB();
+        const nextId = db.animeEdits.length + 1; 
+        userState.data.id = nextId;
+
+        db.animeEdits.push(userState.data);
+        writeDB(db);
+        adminState[ctx.from.id] = null;
+
+        ctx.answerCbQuery().catch(()=>{});
+        return ctx.reply(`✅ Successfully added!\n\nCode ID: ${userState.data.id}\nCharacter: ${userState.data.name}\nAnime: ${userState.data.anime}\nRarity: ${RARITIES[selectedRarity].name}`).catch(() => {});
+    } catch(e) {}
+});
+
+bot.action(/admin_manage_list_(\d+)/, (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        ctx.answerCbQuery().catch(()=>{});
+        
+        const page = parseInt(ctx.match[1]);
+        const db = readDB();
+        const edits = db.animeEdits || [];
+
+        if (edits.length === 0) {
+            return ctx.reply('No edits found in database.').catch(() => {});
+        }
+
+        const itemsPerPage = 5;
+        const startIdx = page * itemsPerPage;
+        const pageItems = edits.slice(startIdx, startIdx + itemsPerPage);
+
+        let keyboard = [];
+        pageItems.forEach((item) => {
+            keyboard.push([
+                { text: `🆔 ${item.id} | ${item.name} (${RARITIES[item.rarity].name.split(' ')[0]})`, callback_data: `manage_view_${item.id}` }
+            ]);
+        });
+
+        let navRow = [];
+        if (page > 0) navRow.push({ text: '⬅️ Previous', callback_data: `admin_manage_list_${page - 1}` });
+        if (startIdx + itemsPerPage < edits.length) navRow.push({ text: 'Next ➡️', callback_data: `admin_manage_list_${page + 1}` });
+        if (navRow.length > 0) keyboard.push(navRow);
+
+        keyboard.push([{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]);
+
+        const text = `📂 **Manage Edits (Page ${page + 1}):**\nSelect any edit below to change Rarity or Delete it:`;
+        if (ctx.callbackQuery && ctx.callbackQuery.message && ctx.callbackQuery.message.text) {
+            ctx.editMessageText(text, { reply_markup: { inline_keyboard: keyboard }, parse_mode: 'Markdown' }).catch(() => {});
+        } else {
+            ctx.reply(text, { reply_markup: { inline_keyboard: keyboard }, parse_mode: 'Markdown' }).catch(() => {});
+        }
+    } catch(e) {}
+});
+
+bot.action(/manage_view_(\d+)/, (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        ctx.answerCbQuery().catch(()=>{});
+        const editId = parseInt(ctx.match[1]);
+        const db = readDB();
+        const edit = db.animeEdits.find(e => e.id === editId);
+
+        if (!edit) return ctx.reply('Edit not found!').catch(()=>{});
+
+        const keyboard = [
+            [{ text: '⭐ Change Rarity', callback_data: `manage_chrarity_${edit.id}` }],
+            [{ text: '🗑️ Delete Edit', callback_data: `manage_delete_${edit.id}` }],
+            [{ text: '🔙 Back to List', callback_data: 'admin_manage_list_0' }]
+        ];
+
+        ctx.reply(`📊 **Edit Details:**\n\n**ID:** ${edit.id}\n**Character:** ${edit.name}\n**Anime:** ${edit.anime}\n**Current Rarity:** ${RARITIES[edit.rarity].name}`, {
+            reply_markup: { inline_keyboard: keyboard },
+            parse_mode: 'Markdown'
+        }).catch(() => {});
+    } catch(e) {}
+});
+
+bot.action(/manage_chrarity_(\d+)/, (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        ctx.answerCbQuery().catch(()=>{});
+        const editId = ctx.match[1];
+        
+        const keyboard = Object.keys(RARITIES).map(key => [
+            { text: RARITIES[key].name, callback_data: `apply_rarity_${editId}_${key}` }
+        ]);
+        keyboard.push([{ text: '❌ Cancel', callback_data: `manage_view_${editId}` }]);
+
+        ctx.editMessageText('Select the new Rarity for this edit:', {
+            reply_markup: { inline_keyboard: keyboard }
+        }).catch(() => {});
+    } catch(e) {}
+});
+
+bot.action(/apply_rarity_(\d+)_(.+)/, (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        const editId = parseInt(ctx.match[1]);
+        const newRarity = ctx.match[2];
+
+        const db = readDB();
+        const editIndex = db.animeEdits.findIndex(e => e.id === editId);
+
+        if (editIndex !== -1) {
+            db.animeEdits[editIndex].rarity = newRarity;
+            writeDB(db);
+            ctx.answerCbQuery('Rarity updated successfully! ✅').catch(()=>{});
+        } else {
+            ctx.answerCbQuery('Error updating.').catch(()=>{});
+        }
+        
+        return ctx.editMessageText('✅ Rarity updated successfully!', {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Return', callback_data: `manage_view_${editId}` }]] }
+        }).catch(() => {});
+    } catch(e) {}
+});
+
+bot.action(/manage_delete_(\d+)/, (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!').catch(()=>{});
+        const editId = parseInt(ctx.match[1]);
+
+        const db = readDB();
+        db.animeEdits = db.animeEdits.filter(e => e.id !== editId);
+        writeDB(db);
+
+        ctx.answerCbQuery('Deleted successfully! 🗑️').catch(()=>{});
+        ctx.editMessageText('🗑️ The edit has been completely deleted from database.', {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back to List', callback_data: 'admin_manage_list_0' }]] }
+        }).catch(() => {});
+    } catch(e) {}
+});
+
+bot.action('back_to_menu', (ctx) => {
+    try {
+        if (ctx.from.id !== ADMIN_ID) return;
+        ctx.answerCbQuery().catch(()=>{});
+        ctx.editMessageText('Welcome back Admin! Choose an option:', {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: '➕ Add New Edit', callback_data: 'admin_start_add' }],
@@ -104,82 +339,63 @@ bot.start((ctx) => {
                 ]
             }
         }).catch(() => {});
-    }
-    ctx.reply('Welcome to Anime Catcher Bot! Add me to a group and send /setup to activate.').catch(() => {});
+    } catch(e) {}
 });
 
-bot.command('amir', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    spawnInChat(ctx.chat.id);
+bot.on('message', async (ctx) => {
+    try {
+        if (ctx.chat.type !== 'private' || ctx.from.id !== ADMIN_ID) return;
+        const userState = adminState[ctx.from.id];
+        if (!userState) return;
+
+        if (userState.step === 'WAITING_FOR_FILE') {
+            let fileId = null;
+            let fileType = null;
+
+            if (ctx.message.video) { fileId = ctx.message.video.file_id; fileType = 'video'; }
+            else if (ctx.message.photo) { fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id; fileType = 'photo'; }
+            else if (ctx.message.animation) { fileId = ctx.message.animation.file_id; fileType = 'animation'; }
+
+            if (!fileId) return ctx.reply('Invalid format! Please send a valid Video, GIF, or Photo:').catch(() => {});
+
+            userState.data.file = fileId;
+            userState.data.type = fileType;
+            userState.step = 'WAITING_FOR_NAME';
+            return ctx.reply('What is the Character Name?').catch(() => {});
+        }
+
+        if (userState.step === 'WAITING_FOR_NAME') {
+            if (!ctx.message.text) return ctx.reply('Please type a text name:').catch(() => {});
+            userState.data.name = ctx.message.text;
+            userState.step = 'WAITING_FOR_ANIME';
+            return ctx.reply('What is the Anime Name?').catch(() => {});
+        }
+
+        if (userState.step === 'WAITING_FOR_ANIME') {
+            if (!ctx.message.text) return ctx.reply('Please type a text name:').catch(() => {});
+            userState.data.anime = ctx.message.text;
+            userState.step = 'WAITING_FOR_RARITY';
+
+            const buttons = Object.keys(RARITIES).map(key => [{ text: RARITIES[key].name, callback_data: `set_rarity_${key}` }]);
+            return ctx.reply('Select the Rarity for this edit:', { reply_markup: { inline_keyboard: buttons } }).catch(() => {});
+        }
+    } catch(e) {}
 });
 
-bot.command('setup', (ctx) => {
-    if (ctx.chat.type === 'private') return ctx.reply('This command only works in groups!');
-    const chatId = ctx.chat.id;
-    const db = readDB();
-    if (!db.activeGroups.includes(chatId)) {
-        db.activeGroups.push(chatId);
-        writeDB(db);
-    }
-    ctx.reply('✅ Auto spawn system active! An edit will spawn every 5 minutes.').catch(() => {});
+setInterval(spawnEditInGroups, 300000);
+
+const http = require('http');
+http.createServer((req, res) => {
+    res.write("Bot is Running!");
+    res.end();
+}).listen(process.env.PORT || 3000);
+
+bot.launch().then(() => console.log('✅ Anti-Crash Advanced System online!'));
+
+// گرفتن ارورهای احتمالی کلی برای جلوگیری از کرش کل پروژه
+process.on('uncaughtException', (err) => {
+    console.error('Caught exception: ', err);
 });
-
-bot.command('cap', async (ctx) => {
-    if (ctx.chat.type === 'private') return;
-    
-    if (!ctx.message.reply_to_message) {
-        return ctx.reply('⚠️ Please reply to the anime edit message!').catch(() => {});
-    }
-
-    const replyMsgId = ctx.message.reply_to_message.message_id;
-    const activeSpawn = activeSpawns[replyMsgId];
-
-    if (!activeSpawn) return;
-    if (activeSpawn.captured) {
-        return ctx.reply('❌ This edit has already been captured by someone else!').catch(() => {});
-    }
-
-    const guess = ctx.message.text.replace('/cap', '').trim().toLowerCase();
-    if (!guess) {
-        return ctx.reply('⚠️ Please provide the character name after /cap (e.g., /cap Diego)').catch(() => {});
-    }
-
-    if (guess === activeSpawn.name) {
-        activeSpawn.captured = true;
-        
-        try {
-            await bot.telegram.editMessageCaption(ctx.chat.id, replyMsgId, null, `🎒 **Captured by ${ctx.from.first_name}!** 🎉\n\n**Character Name:** ${activeSpawn.fullName}\n**Rarity:** ${activeSpawn.rarityName}`, {
-                parse_mode: 'Markdown'
-            });
-        } catch(e){}
-
-        return ctx.reply(`🎉 **Congratulations ${ctx.from.first_name}!** You guessed correctly and captured **${activeSpawn.fullName}**!`).catch(() => {});
-    } else {
-        return ctx.reply('❌ Wrong name! Try again.').catch(() => {});
-    }
+process.on('unhandledRejection', (reason, p) => {
+    console.error('Unhandled Rejection at: Promise', p, 'reason:', reason);
 });
-
-bot.action('admin_start_add', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!');
-    ctx.answerCbQuery();
-    adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
-    return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
-});
-
-bot.action(/set_rarity_(.+)/, async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('Denied!');
-    const selectedRarity = ctx.match[1];
-    const userState = adminState[ctx.from.id];
-    
-    if (!userState || !userState.data || !userState.data.file) {
-        return ctx.answerCbQuery('Session expired.', { show_alert: true });
-    }
-    
-    userState.data.rarity = selectedRarity;
-    const db = readDB();
-    const nextId = db.animeEdits.length + 1; // تنظیم شروع آیدی دقیقاً از ۱ و به ترتیب تعداد کاراکترها
-    userState.data.id = nextId;
-
-    db.animeEdits.push(userState.data);
-    writeDB(db);
-    adminState
