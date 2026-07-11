@@ -1,6 +1,7 @@
 const { Telegraf } = require('telegraf');
 const fs = require('fs');
 const path = require('path');
+const ytdl = require('ytdl-core'); // New library for YouTube
 
 // 1. Configuration
 const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
@@ -11,10 +12,10 @@ const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 90000 
 });
 
-// Paths - متصل به هارد دائمی ریل‌وی
+// Paths - Connected to Railway persistent volume
 const DB_PATH = '/data/db.json';
 
-// ساخت پوشه و فایل دیتابیس در صورت عدم وجود
+// Create database folder and file if they don't exist
 function initDatabase() {
     try {
         if (!fs.existsSync('/data')) {
@@ -156,7 +157,7 @@ bot.command('spawn', (ctx) => {
     if (!isAdmin(ctx.from.id)) return;
     const db = readDB();
     if (!db.animeEdits || db.animeEdits.length === 0) {
-        return ctx.reply('❌ دیتابیس خالی است! ابتدا در پی‌وی ربات از منوی ادمین یک ادیت اضافه کنید تا سیستم فعال شود.').catch(()=>{});
+        return ctx.reply('❌ Database is empty! Please add an edit from the admin menu in bot PM to activate the system.').catch(()=>{});
     }
     spawnInChat(ctx.chat.id).catch((err) => {
         ctx.reply(`Error during spawn: ${err.message}`).catch(()=>{});
@@ -486,7 +487,7 @@ bot.action('admin_start_add', (ctx) => {
         if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
         adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
-        return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
+        return ctx.reply('Please send or forward the Video, Photo, or a YouTube link for this edit:').catch(() => {});
     } catch(e) {}
 });
 
@@ -668,8 +669,48 @@ bot.on('message', async (ctx) => {
             if (ctx.message.video) { fileId = ctx.message.video.file_id; fileType = 'video'; }
             else if (ctx.message.photo) { fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id; fileType = 'photo'; }
             else if (ctx.message.animation) { fileId = ctx.message.animation.file_id; fileType = 'animation'; }
+            else if (ctx.message.text && (ctx.message.text.includes('youtube.com') || ctx.message.text.includes('youtu.be'))) {
+                ctx.reply('📥 Downloading and processing YouTube link, please wait...');
+                
+                try {
+                    const videoUrl = ctx.message.text;
+                    if (!ytdl.validateURL(videoUrl)) {
+                        return ctx.reply('❌ Invalid YouTube link.');
+                    }
+                    
+                    const tempFilePath = `/data/temp_${ctx.from.id}.mp4`;
+                    const videoStream = ytdl(videoUrl, { filter: 'audioandvideo' });
+                    
+                    const writeStream = fs.createWriteStream(tempFilePath);
+                    videoStream.pipe(writeStream);
 
-            if (!fileId) return ctx.reply('Invalid format! Please send a valid Video, GIF, or Photo:').catch(() => {});
+                    writeStream.on('finish', async () => {
+                        try {
+                            const sent = await ctx.replyWithVideo({ source: tempFilePath });
+                            userState.data.file = sent.video.file_id;
+                            userState.data.type = 'video';
+                            userState.step = 'WAITING_FOR_NAME';
+                            ctx.reply('✅ File downloaded! What is the Character Name?');
+                            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+                        } catch (err) {
+                            ctx.reply('❌ Telegram upload failed: ' + err.message);
+                            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+                        }
+                    });
+
+                    videoStream.on('error', (err) => {
+                        ctx.reply('❌ YouTube Download Error: ' + err.message);
+                        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+                    });
+
+                    return; // Prevent running the fallback below while downloading
+                    
+                } catch (err) {
+                    return ctx.reply('❌ General Error: ' + err.message);
+                }
+            }
+
+            if (!fileId) return ctx.reply('Invalid format! Please send a valid Video, GIF, Photo, or YouTube link:').catch(() => {});
 
             userState.data.file = fileId;
             userState.data.type = fileType;
@@ -695,7 +736,6 @@ bot.on('message', async (ctx) => {
     } catch(e) {}
 });
 
-// زمان اسپاون روی ۱۰ دقیقه تنظیم شد
 setInterval(spawnEditInGroups, 600000);
 
 const http = require('http');
