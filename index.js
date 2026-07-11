@@ -671,21 +671,42 @@ bot.on('message', async (ctx) => {
             else if (ctx.message.animation) { fileId = ctx.message.animation.file_id; fileType = 'animation'; }
             else if (ctx.message.text && (ctx.message.text.includes('youtube.com') || ctx.message.text.includes('youtu.be'))) {
                 ctx.reply('📥 Downloading and processing YouTube link, please wait...');
+                
                 try {
                     const videoUrl = ctx.message.text;
                     if (!ytdl.validateURL(videoUrl)) {
                         return ctx.reply('❌ Invalid YouTube link.');
                     }
-                    const stream = ytdl(videoUrl, { 
-                        filter: 'audioandvideo', 
-                        quality: 'highest',
-                        highWaterMark: 1 << 25 
+                    
+                    const tempFilePath = `/data/temp_${ctx.from.id}.mp4`;
+                    const videoStream = ytdl(videoUrl, { filter: 'audioandvideo' });
+                    
+                    const writeStream = fs.createWriteStream(tempFilePath);
+                    videoStream.pipe(writeStream);
+
+                    writeStream.on('finish', async () => {
+                        try {
+                            const sent = await ctx.replyWithVideo({ source: tempFilePath });
+                            userState.data.file = sent.video.file_id;
+                            userState.data.type = 'video';
+                            userState.step = 'WAITING_FOR_NAME';
+                            ctx.reply('✅ File downloaded! What is the Character Name?');
+                            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+                        } catch (err) {
+                            ctx.reply('❌ Telegram upload failed: ' + err.message);
+                            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+                        }
                     });
-                    const sent = await ctx.replyWithVideo({ source: stream });
-                    fileId = sent.video.file_id;
-                    fileType = 'video';
+
+                    videoStream.on('error', (err) => {
+                        ctx.reply('❌ YouTube Download Error: ' + err.message);
+                        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+                    });
+
+                    return; // Prevent running the fallback below while downloading
+                    
                 } catch (err) {
-                    return ctx.reply('❌ Error downloading video: ' + err.message);
+                    return ctx.reply('❌ General Error: ' + err.message);
                 }
             }
 
