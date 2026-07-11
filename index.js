@@ -1,6 +1,7 @@
 const { Telegraf } = require('telegraf');
 const fs = require('fs');
 const path = require('path');
+const ytdl = require('ytdl-core'); // کتابخانه جدید برای یوتیوب
 
 // 1. Configuration
 const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
@@ -486,7 +487,7 @@ bot.action('admin_start_add', (ctx) => {
         if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
         adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
-        return ctx.reply('Please send or forward the Video or Photo for this edit:').catch(() => {});
+        return ctx.reply('Please send or forward the Video, Photo, or a YouTube link for this edit:').catch(() => {});
     } catch(e) {}
 });
 
@@ -668,8 +669,19 @@ bot.on('message', async (ctx) => {
             if (ctx.message.video) { fileId = ctx.message.video.file_id; fileType = 'video'; }
             else if (ctx.message.photo) { fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id; fileType = 'photo'; }
             else if (ctx.message.animation) { fileId = ctx.message.animation.file_id; fileType = 'animation'; }
+            else if (ctx.message.text && (ctx.message.text.includes('youtube.com') || ctx.message.text.includes('youtu.be'))) {
+                ctx.reply('در حال دانلود ویدیو از یوتیوب، لطفاً صبر کنید...');
+                try {
+                    const stream = ytdl(ctx.message.text, { filter: 'videoandaudio', quality: 'highest' });
+                    const sent = await ctx.replyWithVideo({ source: stream });
+                    fileId = sent.video.file_id;
+                    fileType = 'video';
+                } catch (err) {
+                    return ctx.reply('خطا در دانلود ویدیو: ' + err.message);
+                }
+            }
 
-            if (!fileId) return ctx.reply('Invalid format! Please send a valid Video, GIF, or Photo:').catch(() => {});
+            if (!fileId) return ctx.reply('Invalid format! Please send a valid Video, GIF, Photo, or YouTube link:').catch(() => {});
 
             userState.data.file = fileId;
             userState.data.type = fileType;
@@ -695,7 +707,6 @@ bot.on('message', async (ctx) => {
     } catch(e) {}
 });
 
-// زمان اسپاون روی ۱۰ دقیقه تنظیم شد
 setInterval(spawnEditInGroups, 600000);
 
 const http = require('http');
