@@ -1,15 +1,20 @@
 const { Telegraf } = require('telegraf');
 const fs = require('fs');
 const path = require('path');
-const ytdl = require('ytdl-core'); // New library for YouTube
+const youtubedl = require('youtube-dl-exec'); // Replaces ytdl-core: supports YouTube + TikTok
 
 // 1. Configuration
-const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
-const ADMIN_IDS = [7334867757, 6155765664]; 
+const BOT_TOKEN = process.env.BOT_TOKEN; // ⚠️ Set this in Railway → Variables (never hardcode it!)
+const ADMIN_IDS = [7334867757, 6155765664];
 const isAdmin = (id) => ADMIN_IDS.includes(id);
 
-const bot = new Telegraf(BOT_TOKEN, { 
-    handlerTimeout: 90000 
+if (!BOT_TOKEN) {
+    console.error('❌ BOT_TOKEN environment variable is missing! Set it in Railway → Variables.');
+    process.exit(1);
+}
+
+const bot = new Telegraf(BOT_TOKEN, {
+    handlerTimeout: 90000
 });
 
 // Paths - Connected to Railway persistent volume
@@ -40,11 +45,11 @@ function readDB() {
         }
         const data = fs.readFileSync(DB_PATH, 'utf8');
         const parsed = JSON.parse(data);
-        
+
         if (!parsed.activeGroups) parsed.activeGroups = [];
         if (!parsed.animeEdits) parsed.animeEdits = [];
         if (!parsed.userBackpacks) parsed.userBackpacks = {};
-        
+
         return parsed;
     } catch (err) {
         console.error('Read DB Error:', err.message);
@@ -74,7 +79,29 @@ const RARITIES = {
 
 let adminState = {};
 let activeSpawns = {};
-let pendingGifts = {}; 
+let pendingGifts = {};
+
+// --- Link download helper (YouTube + TikTok) ---
+function isSupportedLink(text) {
+    return /(?:youtube\.com|youtu\.be|tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)/i.test(text);
+}
+
+async function downloadFromLink(url, userId) {
+    const tempFilePath = `/data/temp_${userId}_${Date.now()}.mp4`;
+    await youtubedl(url, {
+        output: tempFilePath,
+        format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        mergeOutputFormat: 'mp4',
+        noPlaylist: true,
+        maxFilesize: '50M',
+        noCheckCertificates: true,
+        noWarnings: true,
+    });
+    if (!fs.existsSync(tempFilePath)) {
+        throw new Error('File was not created after download.');
+    }
+    return tempFilePath;
+}
 
 function getRandomEdit() {
     const db = readDB();
@@ -93,7 +120,7 @@ function getRandomEdit() {
     }
 
     const pool = db.animeEdits.filter(edit => edit.rarity === selectedRarity);
-    if (pool.length === 0) return db.animeEdits[0]; 
+    if (pool.length === 0) return db.animeEdits[0];
     return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -115,7 +142,7 @@ async function spawnInChat(chatId) {
         }
 
         activeSpawns[sentMsg.message_id] = {
-            id: Number(edit.id), 
+            id: Number(edit.id),
             name: edit.name.trim().toLowerCase(),
             fullName: edit.name,
             rarityName: rarityInfo.name,
@@ -139,7 +166,7 @@ function spawnEditInGroups() {
 bot.start((ctx) => {
     try {
         if (isAdmin(ctx.from.id) && ctx.chat.type === 'private') {
-            adminState[ctx.from.id] = null; 
+            adminState[ctx.from.id] = null;
             return ctx.reply('Welcome back Admin! Choose an option:', {
                 reply_markup: {
                     inline_keyboard: [
@@ -180,7 +207,7 @@ bot.command('setup', (ctx) => {
 bot.command('gift', async (ctx) => {
     try {
         if (ctx.chat.type === 'private') return ctx.reply('This command only works in groups!').catch(()=>{});
-        
+
         if (!ctx.message.reply_to_message) {
             return ctx.reply('⚠️ Please reply to the user you want to gift the edit to!').catch(() => {});
         }
@@ -209,7 +236,7 @@ bot.command('gift', async (ctx) => {
 
         const db = readDB();
         const senderItems = db.userBackpacks[senderId] || [];
-        
+
         const itemIndex = senderItems.findIndex(item => Number(item.id) === editId);
 
         if (itemIndex === -1) {
@@ -260,7 +287,7 @@ bot.action(/gift_confirm_(.+)/, (ctx) => {
 
         const db = readDB();
         const senderItems = db.userBackpacks[giftData.senderId] || [];
-        
+
         const itemIndex = senderItems.findIndex(item => Number(item.id) === giftData.editId);
 
         if (itemIndex === -1) {
@@ -314,7 +341,7 @@ bot.command('see', async (ctx) => {
     try {
         const msgText = ctx.message.text || '';
         const args = msgText.replace('/see', '').trim();
-        
+
         if (!args) {
             return ctx.reply('⚠️ Please provide the Edit ID after /see (e.g., /see 1)').catch(() => {});
         }
@@ -365,7 +392,7 @@ bot.command('get', async (ctx) => {
 
         const msgText = ctx.message.text || '';
         const args = msgText.replace('/get', '').trim();
-        
+
         if (!args) {
             return ctx.reply('⚠️ Please provide the Edit ID after /get (e.g., /get 2)').catch(() => {});
         }
@@ -387,13 +414,13 @@ bot.command('get', async (ctx) => {
         }
 
         db.userBackpacks[ctx.from.id].push({
-            id: Number(edit.id), 
+            id: Number(edit.id),
             name: edit.name,
             anime: edit.anime,
             rarity: edit.rarity,
             caughtAt: new Date().toISOString()
         });
-        
+
         writeDB(db);
 
         const rarityName = RARITIES[edit.rarity] ? RARITIES[edit.rarity].name : edit.rarity;
@@ -408,7 +435,7 @@ bot.command('backpack', (ctx) => {
     try {
         const userId = ctx.from.id;
         const db = readDB();
-        
+
         const userItems = db.userBackpacks[userId] || [];
 
         if (userItems.length === 0) {
@@ -430,7 +457,7 @@ bot.command('backpack', (ctx) => {
 bot.command('cap', async (ctx) => {
     try {
         if (ctx.chat.type === 'private') return;
-        
+
         if (!ctx.message.reply_to_message) {
             return ctx.reply('⚠️ Please reply to the anime edit message!').catch(() => {});
         }
@@ -445,28 +472,28 @@ bot.command('cap', async (ctx) => {
 
         let msgText = ctx.message.text || '';
         const guess = msgText.replace('/cap', '').trim().toLowerCase();
-        
+
         if (!guess) {
             return ctx.reply('⚠️ Please provide the character name after /cap (e.g., /cap Diego)').catch(() => {});
         }
 
         if (guess === activeSpawn.name) {
             activeSpawn.captured = true;
-            
+
             const userId = ctx.from.id;
             const db = readDB();
-            
+
             if (!db.userBackpacks[userId]) db.userBackpacks[userId] = [];
-            
+
             db.userBackpacks[userId].push({
-                id: Number(activeSpawn.id), 
+                id: Number(activeSpawn.id),
                 name: activeSpawn.fullName,
                 anime: activeSpawn.anime,
                 rarity: activeSpawn.rarityKey,
                 caughtAt: new Date().toISOString()
             });
             writeDB(db);
-            
+
             try {
                 await bot.telegram.editMessageCaption(ctx.chat.id, replyMsgId, undefined, `🎒 **Captured by ${ctx.from.first_name}!** 🎉\n\n**Character Name:** ${activeSpawn.fullName}\n**Rarity:** ${activeSpawn.rarityName}`, {
                     parse_mode: 'Markdown'
@@ -487,7 +514,7 @@ bot.action('admin_start_add', (ctx) => {
         if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
         adminState[ctx.from.id] = { step: 'WAITING_FOR_FILE', data: {} };
-        return ctx.reply('Please send or forward the Video, Photo, or a YouTube link for this edit:').catch(() => {});
+        return ctx.reply('Please send or forward the Video, Photo, or a YouTube/TikTok link for this edit:').catch(() => {});
     } catch(e) {}
 });
 
@@ -496,14 +523,14 @@ bot.action(/set_rarity_(.+)/, async (ctx) => {
         if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         const selectedRarity = ctx.match[1];
         const userState = adminState[ctx.from.id];
-        
+
         if (!userState || !userState.data || !userState.data.file) {
             return ctx.answerCbQuery('Session expired.', { show_alert: true }).catch(()=>{});
         }
-        
+
         userState.data.rarity = selectedRarity;
         const db = readDB();
-        
+
         let nextId = 1;
         if (db.animeEdits && db.animeEdits.length > 0) {
             const ids = db.animeEdits.map(e => Number(e.id)).filter(id => !isNaN(id));
@@ -526,7 +553,7 @@ bot.action(/admin_manage_list_(\d+)/, (ctx) => {
     try {
         if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
-        
+
         const page = parseInt(ctx.match[1]);
         const db = readDB();
         const edits = db.animeEdits || [];
@@ -590,7 +617,7 @@ bot.action(/manage_chrarity_(\d+)/, (ctx) => {
         if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery('Denied!').catch(()=>{});
         ctx.answerCbQuery().catch(()=>{});
         const editId = ctx.match[1];
-        
+
         const keyboard = Object.keys(RARITIES).map(key => [
             { text: RARITIES[key].name, callback_data: `apply_rarity_${editId}_${key}` }
         ]);
@@ -618,7 +645,7 @@ bot.action(/apply_rarity_(\d+)_(.+)/, (ctx) => {
         } else {
             ctx.answerCbQuery('Error updating.').catch(()=>{});
         }
-        
+
         return ctx.editMessageText('✅ Rarity updated successfully!', {
             reply_markup: { inline_keyboard: [[{ text: '🔙 Return', callback_data: `manage_view_${editId}` }]] }
         }).catch(() => {});
@@ -669,48 +696,30 @@ bot.on('message', async (ctx) => {
             if (ctx.message.video) { fileId = ctx.message.video.file_id; fileType = 'video'; }
             else if (ctx.message.photo) { fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id; fileType = 'photo'; }
             else if (ctx.message.animation) { fileId = ctx.message.animation.file_id; fileType = 'animation'; }
-            else if (ctx.message.text && (ctx.message.text.includes('youtube.com') || ctx.message.text.includes('youtu.be'))) {
-                ctx.reply('📥 Downloading and processing YouTube link, please wait...');
-                
+            else if (ctx.message.text && isSupportedLink(ctx.message.text)) {
+                const videoUrl = ctx.message.text.trim();
+                await ctx.reply('📥 در حال دانلود ویدیو، چند لحظه صبر کنید...').catch(() => {});
+
+                let tempFilePath;
                 try {
-                    const videoUrl = ctx.message.text;
-                    if (!ytdl.validateURL(videoUrl)) {
-                        return ctx.reply('❌ Invalid YouTube link.');
-                    }
-                    
-                    const tempFilePath = `/data/temp_${ctx.from.id}.mp4`;
-                    const videoStream = ytdl(videoUrl, { filter: 'audioandvideo' });
-                    
-                    const writeStream = fs.createWriteStream(tempFilePath);
-                    videoStream.pipe(writeStream);
-
-                    writeStream.on('finish', async () => {
-                        try {
-                            const sent = await ctx.replyWithVideo({ source: tempFilePath });
-                            userState.data.file = sent.video.file_id;
-                            userState.data.type = 'video';
-                            userState.step = 'WAITING_FOR_NAME';
-                            ctx.reply('✅ File downloaded! What is the Character Name?');
-                            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-                        } catch (err) {
-                            ctx.reply('❌ Telegram upload failed: ' + err.message);
-                            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-                        }
-                    });
-
-                    videoStream.on('error', (err) => {
-                        ctx.reply('❌ YouTube Download Error: ' + err.message);
-                        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-                    });
-
-                    return; // Prevent running the fallback below while downloading
-                    
+                    tempFilePath = await downloadFromLink(videoUrl, ctx.from.id);
+                    const sent = await ctx.replyWithVideo({ source: tempFilePath });
+                    userState.data.file = sent.video.file_id;
+                    userState.data.type = 'video';
+                    userState.step = 'WAITING_FOR_NAME';
+                    await ctx.reply('✅ فایل دانلود شد! اسم کاراکتر چیه؟').catch(() => {});
                 } catch (err) {
-                    return ctx.reply('❌ General Error: ' + err.message);
+                    console.error('Link download error:', err.message);
+                    await ctx.reply('❌ دانلود ناموفق بود: ' + err.message.slice(0, 200)).catch(() => {});
+                } finally {
+                    if (tempFilePath && fs.existsSync(tempFilePath)) {
+                        try { fs.unlinkSync(tempFilePath); } catch {}
+                    }
                 }
+                return; // Prevent running the fallback below while downloading
             }
 
-            if (!fileId) return ctx.reply('Invalid format! Please send a valid Video, GIF, Photo, or YouTube link:').catch(() => {});
+            if (!fileId) return ctx.reply('Invalid format! Please send a valid Video, GIF, Photo, or YouTube/TikTok link:').catch(() => {});
 
             userState.data.file = fileId;
             userState.data.type = fileType;
