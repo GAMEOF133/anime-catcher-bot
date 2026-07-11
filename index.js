@@ -1,7 +1,7 @@
 const { Telegraf } = require('telegraf');
 const fs = require('fs');
 const path = require('path');
-const ytdl = require('ytdl-core'); // کتابخانه جدید برای یوتیوب
+const ytdl = require('ytdl-core'); // New library for YouTube
 
 // 1. Configuration
 const BOT_TOKEN = '8380688406:AAH4lWrMOxlfSSvB__1O8zDuQdPE_NwgMZg'; 
@@ -12,10 +12,10 @@ const bot = new Telegraf(BOT_TOKEN, {
     handlerTimeout: 90000 
 });
 
-// Paths - متصل به هارد دائمی ریل‌وی
+// Paths - Connected to Railway persistent volume
 const DB_PATH = '/data/db.json';
 
-// ساخت پوشه و فایل دیتابیس در صورت عدم وجود
+// Create database folder and file if they don't exist
 function initDatabase() {
     try {
         if (!fs.existsSync('/data')) {
@@ -157,7 +157,7 @@ bot.command('spawn', (ctx) => {
     if (!isAdmin(ctx.from.id)) return;
     const db = readDB();
     if (!db.animeEdits || db.animeEdits.length === 0) {
-        return ctx.reply('❌ دیتابیس خالی است! ابتدا در پی‌وی ربات از منوی ادمین یک ادیت اضافه کنید تا سیستم فعال شود.').catch(()=>{});
+        return ctx.reply('❌ Database is empty! Please add an edit from the admin menu in bot PM to activate the system.').catch(()=>{});
     }
     spawnInChat(ctx.chat.id).catch((err) => {
         ctx.reply(`Error during spawn: ${err.message}`).catch(()=>{});
@@ -670,14 +670,22 @@ bot.on('message', async (ctx) => {
             else if (ctx.message.photo) { fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id; fileType = 'photo'; }
             else if (ctx.message.animation) { fileId = ctx.message.animation.file_id; fileType = 'animation'; }
             else if (ctx.message.text && (ctx.message.text.includes('youtube.com') || ctx.message.text.includes('youtu.be'))) {
-                ctx.reply('در حال دانلود ویدیو از یوتیوب، لطفاً صبر کنید...');
+                ctx.reply('📥 Downloading and processing YouTube link, please wait...');
                 try {
-                    const stream = ytdl(ctx.message.text, { filter: 'videoandaudio', quality: 'highest' });
+                    const videoUrl = ctx.message.text;
+                    if (!ytdl.validateURL(videoUrl)) {
+                        return ctx.reply('❌ Invalid YouTube link.');
+                    }
+                    const stream = ytdl(videoUrl, { 
+                        filter: 'audioandvideo', 
+                        quality: 'highest',
+                        highWaterMark: 1 << 25 
+                    });
                     const sent = await ctx.replyWithVideo({ source: stream });
                     fileId = sent.video.file_id;
                     fileType = 'video';
                 } catch (err) {
-                    return ctx.reply('خطا در دانلود ویدیو: ' + err.message);
+                    return ctx.reply('❌ Error downloading video: ' + err.message);
                 }
             }
 
